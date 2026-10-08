@@ -1,7 +1,7 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import * as S from './sim.js?v=202610081013'
+import * as S from './sim.js?v=202610081030'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -180,6 +180,11 @@ function buildCity() {
   walls.forEach((l, i) => add(l, wallMs[i])); add(roofs, roofM); add(pars, parM)
 }
 
+// 安全地帯の壁: 青い半透明の筒（中から見ても外から見ても分かる）
+const zoneWall = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 128, 1, true), new THREE.MeshBasicMaterial({ color: '#4aa8ff', transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false, fog: false }))
+zoneWall.visible = false
+scene.add(zoneWall)
+
 // ================================================================ 敵の狙撃手（ギリースーツ）・スコープの光
 buildScene()
 const ghillieTex = noiseTex(64, (() => { const r = S.rng(3); return () => 90 + r() * 120 })())
@@ -297,6 +302,8 @@ const SFX = {
   breathIn: () => noise(0.5, 0.06, 800, 'bandpass', 0, 1500, 0, 0, 1, 0.02),
   breathOut: () => noise(0.7, 0.07, 1200, 'bandpass', 0, 500, 0, 0, 1, 0.02),
   kill: () => tone(520, 0.25, 'sine', 0.12, 780, 0.05),
+  // 足音: 草・土は低くこもった音、市街地は硬い音。遠いほど小さく、左右に振る
+  step: (vol, pan, far) => { if (state && state.stage === 'city') noise(0.06, 0.35 * vol, 1400 + Math.random() * 400, 'bandpass', 0, null, pan, far, 2, 0.1); else noise(0.09, 0.4 * vol, 500 + Math.random() * 250, 'lowpass', 0, 180, pan, far, 1, 0.08) },
 }
 
 // ================================================================ 入力
@@ -392,8 +399,43 @@ function drawRing() {
     ${dots}<circle cx="${w / 2}" cy="${h / 2}" r="1.2" fill="#c0392b"/>`
 }
 let hud = {}
+const mini = $('mini'), mctx = mini.getContext('2d')
+let miniN = 0
+function drawMini(st) {
+  if (++miniN % 3) return
+  const me = st.units[0], W = mini.width, R = W / 2, range = 450, sc = R / range, x = mctx
+  x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, W, W)
+  x.save(); x.beginPath(); x.arc(R, R, R, 0, 7); x.clip()
+  x.fillStyle = 'rgba(13,18,16,.72)'; x.fillRect(0, 0, W, W)
+  // 自分を中心に、向いている方を上に（画面右 = カメラの右）
+  x.translate(R, R); x.rotate(Math.PI + yaw); x.scale(sc, sc); x.translate(-me.x, -me.z) // 前が上・カメラの右が右（4方向で検算済み）
+  x.fillStyle = 'rgba(200,205,195,.35)'
+  for (const b of S.WORLD.buildings) x.fillRect(b.x - b.w / 2, b.z - b.d / 2, b.w, b.d)
+  x.fillStyle = 'rgba(160,140,110,.55)'
+  for (const h of S.WORLD.huts) x.fillRect(h.x - h.w / 2, h.z - h.d / 2, h.w, h.d)
+  // 安全地帯（今の円と、縮む先の円）
+  const z = st.zone
+  if (z) {
+    x.lineWidth = 3 / sc; x.strokeStyle = 'rgba(80,170,255,.9)'; x.beginPath(); x.arc(z.x, z.z, z.r, 0, 7); x.stroke()
+    if (z.phase === 'shrink' && z.to) { x.setLineDash([10 / sc, 8 / sc]); x.strokeStyle = 'rgba(255,255,255,.75)'; x.beginPath(); x.arc(z.to.x, z.to.z, z.to.r, 0, 7); x.stroke(); x.setLineDash([]) }
+  }
+  // 撃った敵（時間で薄くなる）
+  for (const p of pings) { const k = 1 - p.t / PING_T; x.fillStyle = `rgba(217,72,59,${k.toFixed(2)})`; x.beginPath(); x.arc(p.x, p.z, 7 / sc, 0, 7); x.fill(); x.strokeStyle = `rgba(255,140,120,${(k * 0.8).toFixed(2)})`; x.lineWidth = 1.5 / sc; x.beginPath(); x.arc(p.x, p.z, (8 + (1 - k) * 14) / sc, 0, 7); x.stroke() }
+  x.restore()
+  // 自分（真ん中の三角）と、外周の方角 N
+  x.fillStyle = '#e9e4d6'; x.beginPath(); x.moveTo(R, R - 8); x.lineTo(R + 6, R + 6); x.lineTo(R - 6, R + 6); x.closePath(); x.fill()
+  x.fillStyle = '#f2b33d'; x.font = '700 20px Chakra Petch'; x.textAlign = 'center'; x.textBaseline = 'middle'
+  x.fillText('N', R + Math.sin(yaw) * (R - 16), R - Math.cos(yaw) * (R - 16)) // 北（+z）は上の回転で (sin yaw, -cos yaw) に来る
+}
 function drawHud(st) {
   const me = st.units[0]
+  drawMini(st)
+  if (st.zone) {
+    const z = st.zone, t = Math.max(0, Math.ceil(z.t)), mmss = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
+    const txt = z.phase === 'shrink' ? `安全地帯 縮小中 ${mmss}` : z.t > 1e8 ? '安全地帯 最終' : `次の縮小まで ${mmss}`
+    if (hud.zone !== txt) { hud.zone = txt; $('zoneInfo').textContent = txt; $('zoneInfo').classList.toggle('shrink', z.phase === 'shrink') }
+    if (hud.out !== !!me.outside) { hud.out = !!me.outside; $('outWarn').hidden = !me.outside }
+  }
   const bdeg = ((-yaw * 180 / Math.PI) % 360 + 360) % 360 // 北（+z）を0度、時計回り（東 = -x 側を見る向き）
   $('compassStrip').style.transform = `translateX(${-((bdeg + 360) * 4) + $('compass').clientWidth / 2}px)`
   $('bearing').textContent = String(Math.round(bdeg) % 360).padStart(3, '0') + '°'
@@ -402,7 +444,7 @@ function drawHud(st) {
   $('windArrow').setAttribute('transform', `rotate(${-rel * 180 / Math.PI + 180})`)
   $('windTxt').textContent = st.wind.speed.toFixed(1) + ' m/s'
   // 体力・姿勢・弾・ゼロイン
-  const hp = Math.max(0, me.hp) / S.PLAYER_HP
+  const hp = Math.min(1, Math.max(0, me.hp) / S.PLAYER_HP)
   if (hud.hp !== hp) { hud.hp = hp; $('hpBar').firstElementChild.style.transform = `scaleX(${hp})`; $('hpBar').classList.toggle('low', hp < 0.5) }
   if (hud.st !== me.stance) { hud.st = me.stance; $('stanceUse').setAttribute('href', '#s-' + me.stance); $('stanceTxt').textContent = { stand: '立ち', crouch: 'しゃがみ', prone: '伏せ' }[me.stance] }
   const ammo = me.ammo + '/' + me.reloadT
@@ -437,6 +479,7 @@ function start() {
   for (const v of enemyViews) if (v) scene.remove(v.g, v.glint) // 0番（自分）は空き
   enemyViews.length = 0
   for (const t of trails) scene.remove(t.l); trails.length = 0
+  pings.length = 0
   for (const d of dust) scene.remove(d.s); dust.length = 0
   if (S.STAGE !== stage) { S.setStage(stage); buildScene() }
   state = S.createState(Date.now() % 100000, { difficulty, stage })
@@ -485,6 +528,7 @@ function handleEvents(evs) {
           l.frustumCulled = false; scene.add(l); trails.push({ l, t: 0, bullet: state.bullets[state.bullets.length - 1], pts: [pts[0]] })
         } else {
           SFX.far(d, pan)
+          pings.push({ id: e.id, x: e.x, z: e.z, t: 0 })
           // 銃口の光と煙（遠くでも見える）
           const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex(), color: '#ffd38a', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: false, fog: false }))
           fl.position.set(e.x + e.dx, e.y + e.dy, e.z + e.dz); fl.scale.set(0.05, 0.05, 1); scene.add(fl); dust.push({ s: fl, t: 0, life: 0.09, size: 0.05, flash: true })
@@ -512,14 +556,17 @@ function handleEvents(evs) {
         }
         break
       case 'kill':
+        if (e.by < 0 && e.id !== 0) feed(`${state.units[e.id].name} が安全地帯の外で倒れた`)
         if (e.by === 0) { SFX.kill(); feed(`${e.part === 'head' ? 'ヘッドショット' : '命中'}　<b>${Math.round(e.dist)} m</b>　${state.units[e.id].name} を倒した`) }
-        if (e.id === 0) {
+        if (e.id === 0 && e.by < 0) feed('<b>安全地帯の外で倒れた</b>', true)
+        if (e.id === 0 && e.by >= 0) {
           feed(`<b>撃たれた</b>　${Math.round(e.dist)} m 先の ${state.units[e.by].name}`, true)
           // 倒された相手を見せる: 撃った敵の方へ向き、スコープで寄る（銃口の煙が見える）
           const k = state.units[e.by]; killcam = { yaw: Math.atan2(k.x - me.x, k.z - me.z), pitch: Math.atan2(k.y + 1 - (me.y + 0.5), Math.hypot(k.x - me.x, k.z - me.z)), t: 0 }
         }
         break
       case 'aim': break
+      case 'zone': if (e.phase === 'shrink') feed('安全地帯が <b>縮み始めた</b>'); break
       case 'reload': SFX.round(0.15); break
       case 'round': SFX.round(); break
       case 'dry': SFX.dry(); break
@@ -530,6 +577,9 @@ function handleEvents(evs) {
 
 // ================================================================ 毎フレーム
 let kick = 0, swayView = { x: 0, y: 0 }, killcam = null
+const pings = [] // 撃った敵: ミニマップに一定時間出す
+const PING_T = 10
+const stepAcc = {}
 function fixedStep() {
   const input = { ...readInput(), ...pressed }
   for (const k in pressed) delete pressed[k]
@@ -569,6 +619,24 @@ function updateViews(dt) {
     d.s.material.opacity = (d.flash ? 1 : d.op ?? 0.6) * Math.max(0, 1 - k * k)
     if (d.t > d.life) { scene.remove(d.s); d.s.material.dispose(); dust.splice(i, 1) }
   }
+  // 足音（自分と、70m 以内で動いている敵）
+  if (actx) for (const u of st.units) {
+    if (!u.alive) continue
+    const sp = u.player ? Math.hypot(u.vx, u.vz) : (u.ai && u.ai.moveTo ? (u.stance === 'stand' ? S.SPEED.stand : S.SPEED.crouch) : 0)
+    if (sp < 0.3) continue
+    const dx = u.x - me.x, dz = u.z - me.z, d = Math.hypot(dx, dz)
+    if (!u.player && d > 70) continue
+    stepAcc[u.id] = (stepAcc[u.id] || 0) + sp * dt
+    const stride = u.stance === 'prone' ? 1.2 : u.stance === 'crouch' ? 0.65 : 0.8
+    if (stepAcc[u.id] < stride) continue
+    stepAcc[u.id] = 0
+    const rgt = { x: -Math.cos(yaw), z: Math.sin(yaw) }, pan = u.player ? 0 : Math.max(-1, Math.min(1, (dx * rgt.x + dz * rgt.z) / (d || 1)))
+    const vol = u.player ? 0.35 : Math.max(0, 1 - d / 70) * (u.stance === 'stand' ? 1 : 0.55)
+    SFX.step(vol, pan, u.player ? 0 : Math.min(1, d / 90))
+  }
+  for (let i = pings.length - 1; i >= 0; i--) if ((pings[i].t += dt) > PING_T) pings.splice(i, 1)
+  // 安全地帯の壁
+  if (st.zone) { const edge = Math.abs(Math.hypot(me.x - st.zone.x, me.z - st.zone.z) - st.zone.r); zoneWall.visible = edge < 220; zoneWall.material.opacity = 0.22 * Math.max(0, 1 - edge / 220); zoneWall.position.set(st.zone.x, 60, st.zone.z); zoneWall.scale.set(st.zone.r, 240, st.zone.r) } // 壁は縁に近いときだけ見せる（遠くの壁が空に帯のように映るため）
   if (windGain && actx) { windGain.gain.setTargetAtTime(0.012 + st.wind.speed * 0.006, actx.currentTime, 0.5); windFilter.frequency.setTargetAtTime(250 + st.wind.speed * 60, actx.currentTime, 0.5) }
 }
 function applyCamera(dt) {
@@ -631,6 +699,7 @@ window.rl = {
   get mode() { return mode },
   raw: () => state,
   zoom(i) { zoomI = i },
+  pings: () => pings.length,
   h: (x, z) => S.heightAt(x, z),
   start(opts = {}) { start(); if (opts.enemies !== undefined || opts.seed) { state = S.createState(opts.seed ?? 7, { difficulty, stage, ...opts }); for (const v of enemyViews) if (v) scene.remove(v.g, v.glint); enemyViews.length = 0; for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView() } },
   pause(v = true) { paused = v },

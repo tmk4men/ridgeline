@@ -47,6 +47,11 @@
   #wind svg{width:40px;height:40px}
   #enemies{position:absolute;left:calc(18px + env(safe-area-inset-left));top:calc(18px + env(safe-area-inset-top));display:flex;gap:5px;align-items:center}
   #enemies i{width:9px;height:9px;border:1.5px solid var(--paper);transform:rotate(45deg)} #enemies i.dead{background:var(--red);border-color:var(--red)}
+  #mini{position:absolute;left:calc(18px + env(safe-area-inset-left));top:calc(40px + env(safe-area-inset-top));width:160px;height:160px;border-radius:50%;box-shadow:0 0 0 1px rgba(233,228,214,.35)}
+  #zoneInfo{position:absolute;left:calc(18px + env(safe-area-inset-left));top:calc(206px + env(safe-area-inset-top));width:160px;text-align:center;font-size:11px;letter-spacing:.08em;color:var(--dim)}
+  #zoneInfo.shrink{color:#7fc4ff}
+  #outWarn{position:absolute;left:50%;top:calc(76px + env(safe-area-inset-top));transform:translateX(-50%);padding:6px 16px;background:rgba(160,30,20,.8);font-size:13px;font-weight:900;animation:blink .8s steps(2) infinite}
+  @keyframes blink{50%{opacity:.5}}
   #xhair{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:rgba(233,228,214,.7)}
   #feed{position:absolute;left:50%;top:22%;transform:translateX(-50%);display:grid;gap:4px;justify-items:center}
   .feed{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.1em;padding:4px 14px;background:rgba(13,18,16,.6);animation:feed 3.2s forwards;white-space:nowrap}
@@ -100,11 +105,12 @@
   #tBreath{right:calc(40px + env(safe-area-inset-right));bottom:calc(140px + env(safe-area-inset-bottom));width:56px;height:56px}
   #tStance{right:calc(116px + env(safe-area-inset-right));bottom:calc(110px + env(safe-area-inset-bottom));width:52px;height:52px}
   #tProne{right:calc(116px + env(safe-area-inset-right));bottom:calc(172px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
-  #tStance{font-size:11px}
+  #tStance{font-size:10px;letter-spacing:-.04em}
   #tReload{right:calc(186px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:46px;height:46px}
   #tZoomUp,#tZoomDn{width:48px;height:48px;font-size:10px;right:calc(200px + env(safe-area-inset-right))}
   #tZoomUp{bottom:calc(200px + env(safe-area-inset-bottom))} #tZoomDn{bottom:calc(152px + env(safe-area-inset-bottom))}
-  body.touch #left{bottom:auto;top:calc(48px + env(safe-area-inset-top));min-width:0} body.touch #hpBar{width:130px}
+  body.touch #mini{width:104px;height:104px} body.touch #zoneInfo{top:calc(148px + env(safe-area-inset-top));width:104px;font-size:9.5px}
+  body.touch #left{bottom:auto;top:calc(170px + env(safe-area-inset-top));min-width:0} body.touch #hpBar{width:130px}
   body.touch #right{bottom:auto;top:calc(96px + env(safe-area-inset-top));gap:4px} body.touch #right .val{font-size:18px}
   body.touch #hint{display:none}
   /* 高さの低い画面（スマホ横）: 1画面に収める */
@@ -119,6 +125,9 @@
   <div id="compass"><div id="compassStrip" class="mono"></div></div>
   <div id="bearing" class="mono">000°</div>
   <div id="enemies"></div>
+  <canvas id="mini" width="320" height="320" aria-label="ミニマップ"></canvas>
+  <div id="zoneInfo" class="mono"></div>
+  <div id="outWarn" hidden>安全地帯の外　体力が減っている</div>
   <div id="wind"><svg viewBox="-20 -20 40 40"><circle r="17" fill="none" stroke="rgba(233,228,214,.35)" stroke-width="1"/><g id="windArrow"><path d="M0 -13 L5 -3 L1.5 -3 L1.5 12 L-1.5 12 L-1.5 -3 L-5 -3 Z" fill="#e9e4d6"/></g></svg><span class="tag mono" id="windTxt">0.0 m/s</span></div>
   <div id="xhair"></div>
   <div id="scope" hidden>
@@ -190,6 +199,6 @@
   window.addEventListener('error', function (e) { var l = document.getElementById('loading'); if (l && !window.__rlReady) l.textContent = 'ERROR: ' + (e.message || '') })
   setTimeout(function () { if (!window.__rlReady) { var l = document.getElementById('loading'); if (l) l.textContent = '起動できませんでした（' + navigator.userAgent.slice(0, 60) + '）' } }, 15000)
 </script>
-<script type="module" src="./src/main.js?v=202610081013"></script>
+<script type="module" src="./src/main.js?v=202610081030"></script>
 </body>
 </html>

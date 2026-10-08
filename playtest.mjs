@@ -52,6 +52,6 @@ while (Date.now() - t0 < secs * 1000) {
 await p.waitForTimeout(3500)
 await p.screenshot({ path: join(OUT, '99-end.png') })
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n) }; requestAnimationFrame(f) }))
-const end = await p.evaluate(() => ({ mode: rl.mode, result: rl.raw().result, stats: rl.raw().stats, hp: rl.raw().units[0].hp, t: +rl.raw().t.toFixed(0) }))
+const end = await p.evaluate(() => ({ pingsNow: rl.pings(), zoneR: Math.round(rl.raw().zone.r), mode: rl.mode, result: rl.raw().result, stats: rl.raw().stats, hp: rl.raw().units[0].hp, t: +rl.raw().t.toFixed(0) }))
 console.log(JSON.stringify({ out: OUT, fps, fired, end, errors: errs.slice(0, 6), errorCount: errs.length }))
 await b.close(); server.kill()

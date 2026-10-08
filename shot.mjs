@@ -19,6 +19,7 @@ if (scene !== 'title') {
     rl.start({ seed: 7 }); rl.pause(true); rl.run(10)
     const st = rl.raw()
     if (sc === 'play' || sc === 'land') { rl.look(0, -0.03); rl.run(5) }
+    if (sc === 'zone') { st.units[0].hp = 1e9; rl.run(60 * 58, { stance: 'prone' }); st.units[0].hp = 80; const z0 = st.zone; st.units[0].x = z0.x + (z0.r - 60) * 0.0; st.units[0].z = z0.z - (z0.r - 40); st.units[0].y = rl.h(st.units[0].x, st.units[0].z); window.__pingTest = true; const z = st.zone; rl.look(Math.atan2(z.to.x - st.units[0].x, z.to.z - st.units[0].z), 0.02); rl.run(5, { stance: 'crouch' }); return { r: z.r.toFixed(0), to: z.to.r.toFixed(0) } }
     if (sc === 'roof') { rl.look(0, -0.02); rl.run(10, { stance: 'crouch' }) }
     if (sc === 'roofprone') { rl.look(0, -0.02); rl.run(40, { stance: 'prone' }) }
     if (sc === 'result') { st.units.forEach(u => { if (!u.player) u.alive = false }); st.stats = { shots: 9, hits: 6, kills: 6, longest: 612.4, headshots: 2 }; rl.pause(false) }

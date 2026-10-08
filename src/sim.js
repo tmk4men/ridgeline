@@ -19,6 +19,8 @@ export const BREATH_MAX = 6          // 息を止めていられる秒数
 export const PLAYER_HP = 100
 export const DMG = { head: 100, body: 60 }
 export const ENEMY_N = 6
+// 安全地帯: 一定時間ごとに円が縮む。外にいると EN（体力）が減る
+export const ZONE = { first: 45, wait: 40, shrink: 20, ratio: 0.62, minR: 70, dps: 4 }
 
 // ---------------------------------------------------------------- 乱数とノイズ
 export function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296 }
@@ -253,10 +255,11 @@ export function createState(seed = Date.now(), opts = {}) {
     rand: r, t: 0, phase: 'play', result: null,
     wind: { x: 0, z: 0, speed: 0, dir: 0 }, windT: 0,
     units: [], bullets: [], events: [], stats: { shots: 0, hits: 0, kills: 0, longest: 0, headshots: 0 },
-    enemyN: opts.enemies ?? ENEMY_N, difficulty: opts.difficulty ?? 1,
+    enemyN: opts.enemies ?? ENEMY_N, difficulty: opts.difficulty ?? 1, noZone: !!opts.noZone,
   }
   setStage(opts.stage)
   st.stage = STAGE
+  st.zone = { x: 0, z: 0, r: STAGE === 'city' ? 760 : 1150, from: null, to: null, t: ZONE.first, phase: 'wait', stage: 0 } // 最初は全域
   setWind(st, true)
   // 自分: 谷は南の尾根の上。市街地は南の中くらいの高さの建物の屋上
   const ps = STAGE === 'city' ? roofSpot(st, b => b.z < -200 && b.z > -330 && Math.abs(b.x) < 260 && b.h > 10 && b.h < 30) : findSpot(st, 0, -560, 120, s => s.h)
@@ -336,6 +339,7 @@ export function step(st, input = {}) {
   st.wind.dir += (st.windTarget.dir - st.wind.dir) * dt * 0.05
   st.wind.speed += (st.windTarget.speed - st.wind.speed) * dt * 0.05
   st.wind.x = Math.sin(st.wind.dir) * st.wind.speed; st.wind.z = Math.cos(st.wind.dir) * st.wind.speed
+  if (st.phase === 'play' && !st.noZone) stepZone(st)
   if (st.phase === 'play') {
     stepPlayer(st, st.units[0], input)
     for (const u of st.units) if (!u.player && u.alive) stepEnemy(st, u)
@@ -356,6 +360,31 @@ export function step(st, input = {}) {
     else if (st.units.every(u => u.player || !u.alive)) end(st, 'win')
   }
 }
+function stepZone(st) {
+  const z = st.zone, dt = STEP
+  z.t -= dt
+  if (z.phase === 'wait' && z.t <= 0) {
+    // 次の円: 今の円の中に、小さい円を決めて縮み始める
+    const nr = Math.max(ZONE.minR, z.r * ZONE.ratio), a = st.rand() * Math.PI * 2, off = st.rand() * (z.r - nr) * 0.8
+    const nx = Math.max(-HALF + nr * 0.5, Math.min(HALF - nr * 0.5, z.x + Math.cos(a) * off)), nz = Math.max(-HALF + nr * 0.5, Math.min(HALF - nr * 0.5, z.z + Math.sin(a) * off))
+    z.from = { x: z.x, z: z.z, r: z.r }; z.to = { x: nx, z: nz, r: nr }; z.phase = 'shrink'; z.t = ZONE.shrink; z.stage++
+    st.events.push({ type: 'zone', phase: 'shrink' })
+  } else if (z.phase === 'shrink') {
+    const k = 1 - Math.max(0, z.t) / ZONE.shrink
+    z.x = z.from.x + (z.to.x - z.from.x) * k; z.z = z.from.z + (z.to.z - z.from.z) * k; z.r = z.from.r + (z.to.r - z.from.r) * k
+    if (z.t <= 0) { z.phase = 'wait'; z.t = z.r <= ZONE.minR + 0.1 ? 1e9 : ZONE.wait; z.next = null; st.events.push({ type: 'zone', phase: 'wait' }) }
+  }
+  // 外にいる者は減る（縮むほど強く）
+  for (const u of st.units) {
+    if (!u.alive) continue
+    u.outside = Math.hypot(u.x - z.x, u.z - z.z) > z.r
+    if (!u.outside) continue
+    u.hp -= ZONE.dps * (1 + z.stage * 0.5) * dt
+    if (u.hp <= 0) { u.alive = false; st.events.push({ type: 'kill', id: u.id, by: -1, part: 'zone', dist: 0 }) }
+  }
+}
+// 敵が向かう先: 安全地帯（次の円が決まっていればその中）
+export function zoneTarget(st) { const z = st.zone; return z.phase === 'shrink' ? z.to : z }
 function end(st, result) { st.phase = 'over'; st.result = result; st.events.push({ type: 'over', result }) }
 
 function stepPlayer(st, u, input) {
@@ -455,11 +484,25 @@ function stepEnemy(st, e) {
   const dt = STEP, ai = e.ai, me = st.units[0]
   const diff = st.difficulty
   if (ai.heard && st.t >= ai.heard.at) { ai.lastKnown = { x: ai.heard.x, z: ai.heard.z }; ai.awareness = Math.max(ai.awareness, 0.45); ai.heard = null }
+  // 安全地帯の外か縁に近ければ、中へ移る（市街地の屋上なら屋上を下りて通りを歩く）
+  const zt = zoneTarget(st), zd = Math.hypot(e.x - zt.x, e.z - zt.z)
+  if (zd > zt.r * 0.85 && (!ai.moveTo || !ai.toZone)) {
+    const a = st.rand() * Math.PI * 2, rr = st.rand() * zt.r * 0.5
+    let tx = zt.x + Math.cos(a) * rr, tz = zt.z + Math.sin(a) * rr
+    if (STAGE === 'city') { const b = WORLD.buildings.find(b => Math.abs(b.x - tx) < b.w / 2 + 1 && Math.abs(b.z - tz) < b.d / 2 + 1); if (b) { tx = b.x + b.w / 2 + 5; } }
+    ai.moveTo = { x: tx, z: tz }; ai.toZone = true; e.stance = 'stand'
+    if (STAGE === 'city' && e.y > heightAt(e.x, e.z) + 2) { e.y = heightAt(e.x, e.z) } // 屋上から階段で下りた扱い（下りる途中は見えない）
+  }
   // 移動中
   if (ai.moveTo) {
     const dx = ai.moveTo.x - e.x, dz = ai.moveTo.z - e.z, d = Math.hypot(dx, dz)
-    if (d < 1.5) { ai.moveTo = null; e.stance = STAGE === 'city' || st.rand() >= 0.65 ? 'crouch' : 'prone'; e.moved = 0.3 }
-    else { const sp = SPEED.crouch * 1.1; e.x += dx / d * sp * dt; e.z += dz / d * sp * dt; e.y = supportAt(e.x, e.z, e.y + 0.5); e.yaw = Math.atan2(dx, dz); e.moved = 0.7; return }
+    if (d < 1.5) { ai.moveTo = null; ai.toZone = false; e.stance = STAGE === 'city' || st.rand() >= 0.65 ? 'crouch' : 'prone'; e.moved = 0.3 }
+    else {
+      // 歩く（遠い移動は立って歩く: 動く的になる。偏差＝相手の進む先を狙う必要がある）
+      const sp = e.stance === 'stand' ? SPEED.stand : SPEED.crouch * 1.1
+      const nx = e.x + dx / d * sp * dt, nz = e.z + dz / d * sp * dt
+      if (STAGE === 'city' && inHut(nx, e.y + 0.8, nz)) { ai.moveTo = { x: e.x + (st.rand() - 0.5) * 30, z: e.z + (st.rand() - 0.5) * 30 }; return } // 建物にぶつかったら回り込む
+      e.x = nx; e.z = nz; e.y = supportAt(e.x, e.z, e.y + 0.5); e.yaw = Math.atan2(dx, dz); e.moved = 0.7; return }
   }
   e.moved = Math.max(0, e.moved - dt * 0.5)
   const ee = eyeOf(e)
@@ -527,7 +570,7 @@ function stepEnemy(st, e) {
         const sc = heightAt(nx, nz) * 0.3 + concealment(nx, nz) * 25 + st.rand() * 8
         if (!best || sc > best.sc) best = { x: nx, z: nz, sc }
       }
-      if (best) { ai.moveTo = best; e.stance = 'crouch' }
+      if (best) { ai.moveTo = best; e.stance = dd > 400 ? 'stand' : 'crouch' }
     }
     return
   }

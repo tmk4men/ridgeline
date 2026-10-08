@@ -131,7 +131,7 @@ const fresh = seed => { const st = S.createState(seed); calm(st); st.units.slice
   let deadStand = 0, deadProne = 0
   for (let s = 0; s < 8; s++) {
     for (const [stance, inc] of [['stand', () => deadStand++], ['prone', () => deadProne++]]) {
-      const st = S.createState(200 + s); for (let i = 0; i < 60 * 240 && st.phase === 'play'; i++) S.step(st, { stance })
+      const st = S.createState(200 + s, { noZone: true }); for (let i = 0; i < 60 * 240 && st.phase === 'play'; i++) S.step(st, { stance })
       if (!st.units[0].alive) inc()
     }
   }
@@ -164,8 +164,38 @@ const fresh = seed => { const st = S.createState(seed); calm(st); st.units.slice
 }
 { // 市街地: しゃがんで顔を出していると撃たれることがあり、伏せていれば撃たれない
   let crouch = 0, prone = 0
-  for (let s = 0; s < 6; s++) for (const [stance, inc] of [['crouch', () => crouch++], ['prone', () => prone++]]) { const st = S.createState(400 + s, { stage: 'city' }); for (let i = 0; i < 60 * 180 && st.phase === 'play'; i++) S.step(st, { stance }); if (!st.units[0].alive) inc() }
+  for (let s = 0; s < 6; s++) for (const [stance, inc] of [['crouch', () => crouch++], ['prone', () => prone++]]) { const st = S.createState(400 + s, { stage: 'city', noZone: true }); for (let i = 0; i < 60 * 180 && st.phase === 'play'; i++) S.step(st, { stance }); if (!st.units[0].alive) inc() }
   ok(crouch >= 1 && prone === 0, '市街地: 顔を出すと危険、伏せると安全', `しゃがみ${crouch}/6 伏せ${prone}/6`)
+}
+{ // 安全地帯: 時間で縮み、外にいると体力が減る。敵は中へ移る
+  const st = S.createState(500), z = st.zone, r0 = z.r
+  for (let i = 0; i < 60 * (S.ZONE.first + S.ZONE.shrink + 1); i++) S.step(st, { stance: 'prone' })
+  ok(st.zone.r < r0 * 0.7, '時間がたつと安全地帯が縮む', `${r0.toFixed(0)} → ${st.zone.r.toFixed(0)}m`)
+  const me = st.units[0]; me.x = st.zone.x + st.zone.r + 30; me.z = st.zone.z; me.hp = 100
+  for (let i = 0; i < 120; i++) S.step(st, { stance: 'prone' })
+  ok(me.hp < 100 && me.outside, '外にいると体力が減る', me.hp.toFixed(1))
+  let inside = 0, alive = 0
+  for (let i = 0; i < 60 * 90; i++) { S.step(st, { stance: 'prone' }); st.units[0].hp = 100 }
+  for (const e of st.units.slice(1)) if (e.alive) { alive++; if (Math.hypot(e.x - st.zone.x, e.z - st.zone.z) < st.zone.r) inside++ }
+  ok(alive === 0 || inside / alive >= 0.6, '敵は安全地帯の中へ移る', `${inside}/${alive}`)
+}
+{ // 偏差: 横へ歩く敵（300m）は、真ん中を狙うと外れ、進む先を狙うと当たる（弾が届くまで約0.4秒）
+  const res = {}
+  for (const lead of [false, true]) {
+    const { st, me, e } = fresh(600)
+    me.stance = 'prone'; placeClear(st, e, 300, 'stand')
+    const a = aim(st, e); me.zero = 300
+    for (let i = 0; i < 300; i++) S.step(st, { stance: 'prone', scoped: true, hold: true, yaw: a.yaw, pitch: a.pitch })
+    const side = { x: Math.cos(a.yaw), z: -Math.sin(a.yaw) } // 撃つ向きに対して横
+    const v = S.SPEED.stand, tof = 300 / (S.MUZZLE_V * 0.95)
+    e.ai.moveTo = { x: e.x + side.x * 200, z: e.z + side.z * 200 }; e.stance = 'stand'; e.ai.cool = 1e9
+    const b = S.bodyPoints(e)
+    S.step(st, { yaw: lead ? a.yaw + (v * tof) / 300 : a.yaw, pitch: a.pitch, fire: true, scoped: true, hold: true, stance: 'prone' })
+    let hit = false
+    for (let i = 0; i < 120; i++) { S.step(st, { scoped: true, hold: true, stance: 'prone' }); for (const ev of S.drainEvents(st)) if (ev.type === 'hit' && ev.by === 0) hit = true }
+    res[lead] = hit
+  }
+  ok(!res[false] && res[true], '歩く敵は進む先を狙わないと当たらない（偏差）', `真ん中=${res[false]} 偏差=${res[true]}`)
 }
 console.log(`\n${pass} OK / ${fail} FAIL`)
 process.exit(fail ? 1 : 0)
