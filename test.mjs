@@ -137,5 +137,35 @@ const fresh = seed => { const st = S.createState(seed); calm(st); st.units.slice
   }
   ok(deadStand >= 4 && deadProne <= 2, '立ちっぱなしは危険、伏せは見つかりにくい', `立ち${deadStand}/8 伏せ${deadProne}/8 が倒された`)
 }
+{ // 装填は1発ずつ。途中で撃って中断できる
+  const { st, me } = fresh(301)
+  me.ammo = 0
+  S.step(st, { reload: true })
+  const counts = []; for (let i = 0; i < 60 * 4; i++) { S.step(st, {}); if (counts[counts.length - 1] !== me.ammo) counts.push(me.ammo) }
+  ok(counts.join(',') === '0,1,2,3,4,5', '弾が1発ずつ増える', counts.join(','))
+  me.ammo = 1; S.step(st, { reload: true }); for (let i = 0; i < 80; i++) S.step(st, {})
+  const before = me.ammo; S.step(st, { fire: true })
+  ok(before === 2 && me.ammo === 1 && me.reloadT === 0, '込めている途中でも撃てる（装填は止まる）', `${before} → ${me.ammo}`)
+}
+{ // 市街地: 屋上で伏せると手すり壁に隠れ、しゃがむと外が見える。建物は弾を止める
+  const st = S.createState(302, { stage: 'city' }), me = st.units[0]
+  ok(S.WORLD.buildings.length > 200, '市街地に建物がある', S.WORLD.buildings.length)
+  const roof = S.WORLD.buildings.find(b => Math.abs(b.x - me.x) < b.w / 2 && Math.abs(b.z - me.z) < b.d / 2)
+  ok(roof && Math.abs(me.y - (roof.y + roof.h)) < 0.05, '自分は屋上から始まる', me.y.toFixed(1))
+  // 自分の屋上の南の縁へ寄り、外の点を見る
+  me.x = roof.x; me.z = roof.z - roof.d / 2 + 1.0
+  const out = { x: me.x, y: me.y + 1.0, z: me.z - 60 }
+  me.stance = 'prone'; let e = S.eyeOf(me); const hidden = S.lineOfSight(e.x, e.y, e.z, out.x, out.y, out.z, 0)
+  me.stance = 'crouch'; e = S.eyeOf(me); const seen = S.lineOfSight(e.x, e.y, e.z, out.x, out.y, out.z, 0)
+  ok(hidden === 0 && seen > 0.9, '伏せると手すり壁に隠れ、しゃがむと外が見える', `伏せ=${hidden} しゃがみ=${seen}`)
+  // 屋上から歩いても手すり壁で落ちない
+  me.stance = 'stand'; for (let i = 0; i < 200; i++) S.step(st, { mx: 0, mz: 1, yaw: Math.PI })
+  ok(Math.abs(me.y - (roof.y + roof.h)) < 0.05, '手すり壁があるので屋上から落ちない', me.y.toFixed(1))
+}
+{ // 市街地: しゃがんで顔を出していると撃たれることがあり、伏せていれば撃たれない
+  let crouch = 0, prone = 0
+  for (let s = 0; s < 6; s++) for (const [stance, inc] of [['crouch', () => crouch++], ['prone', () => prone++]]) { const st = S.createState(400 + s, { stage: 'city' }); for (let i = 0; i < 60 * 180 && st.phase === 'play'; i++) S.step(st, { stance }); if (!st.units[0].alive) inc() }
+  ok(crouch >= 1 && prone === 0, '市街地: 顔を出すと危険、伏せると安全', `しゃがみ${crouch}/6 伏せ${prone}/6`)
+}
 console.log(`\n${pass} OK / ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

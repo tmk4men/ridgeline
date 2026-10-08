@@ -6,13 +6,15 @@ import { join } from 'node:path'
 const ROOT = import.meta.dirname, useWebkit = process.argv.includes('webkit')
 const size = process.argv.find(a => /^\d+x\d+$/.test(a)) || '1280x800', [W, H] = size.split('x').map(Number)
 const secs = +(process.argv.find(a => /^\d+$/.test(a)) || 90)
-const OUT = join(ROOT, '検証', 'playtest-' + (useWebkit ? 'webkit-' : '') + size); await mkdir(OUT, { recursive: true })
+const OUT = join(ROOT, '検証', 'playtest-' + (useWebkit ? 'webkit-' : '') + size + (process.argv.includes('city') ? '-city' : '')); await mkdir(OUT, { recursive: true })
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: '5192' } })
 await new Promise(r => setTimeout(r, 400))
 const b = useWebkit ? await webkit.launch() : await chromium.launch({ channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] })
 const p = await (await b.newContext({ viewport: { width: W, height: H } })).newPage(); const errs = []
 p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text()) }); p.on('requestfailed', r => errs.push('fail ' + r.url()))
 await p.goto('http://localhost:5192/'); await p.waitForFunction(() => window.__rlReady); await p.waitForTimeout(800)
+const city = process.argv.includes('city')
+if (city) { await p.click('.sopt[data-s="city"]'); await p.waitForTimeout(1500) }
 await p.click('#startBtn'); await p.waitForTimeout(300)
 let shot = 1, last = Date.now(), fired = 0
 const t0 = Date.now()
@@ -22,7 +24,7 @@ while (Date.now() - t0 < secs * 1000) {
     const me = st.units[0]
     // 見通しの通る一番近い敵を選んで、その胴へ向ける（ゼロインは距離に合わせる）
     let best = null
-    for (const e of st.units) { if (e.player || !e.alive) continue; const d = Math.hypot(e.x - me.x, e.z - me.z); if (d > 750) continue; const eye = { x: me.x, y: me.y + 1.0, z: me.z }; const los = window.__rlLos(eye, { x: e.x, y: e.y + 0.8, z: e.z }); if (los > 0.5 && (!best || d < best.d)) best = { e, d } }
+    for (const e of st.units) { if (e.player || !e.alive) continue; const d = Math.hypot(e.x - me.x, e.z - me.z); if (d > 750) continue; const eye = { x: me.x, y: me.y + 1.05, z: me.z }; const los = window.__rlLos(eye, { x: e.x, y: e.y + 0.8, z: e.z }); if (los > 0.5 && (!best || d < best.d)) best = { e, d } }
     const res = { mode: rl.mode, phase: st.phase, result: st.result, hp: me.hp, kills: st.stats.kills, shots: st.stats.shots, alive: st.units.filter(u => !u.player && u.alive).length, target: best ? best.e.id : -1, dist: best ? best.d : 0, zero: me.zero, bolt: me.boltT, cov: rl.coverage() }
     if (best) { rl.aimAt(best.e.id); rl.scope(true) }
     else {
@@ -36,8 +38,9 @@ while (Date.now() - t0 < secs * 1000) {
   })
   if (!s) { await p.waitForTimeout(100); continue }
   if (s.mode === 'result' || s.mode === 'over') { if (s.mode === 'result') break }
-  if (s.target < 0 && s.mode === 'play') { if (s.stance === 'prone') await p.keyboard.press('KeyZ'); if (s.stance === 'crouch') await p.keyboard.press('KeyC'); await p.keyboard.down('KeyW') } else await p.keyboard.up('KeyW')
-  if (s.target >= 0 && s.mode === 'play' && s.stance !== 'prone') { await p.keyboard.press('KeyZ'); await p.waitForTimeout(500) }
+  if (s.target < 0 && s.mode === 'play' && !city) { if (s.stance === 'prone') await p.keyboard.press('KeyZ'); if (s.stance === 'crouch') await p.keyboard.press('KeyC'); await p.keyboard.down('KeyW') } else await p.keyboard.up('KeyW')
+  const want = city ? 'crouch' : 'prone'
+  if (s.target >= 0 && s.mode === 'play' && s.stance !== want) { await p.keyboard.press(city ? 'KeyC' : 'KeyZ'); await p.waitForTimeout(500) }
   if (s.target >= 0 && s.mode === 'play') {
     const want = Math.max(100, Math.min(800, Math.round(s.dist / 50) * 50))
     if (want > s.zero) await p.keyboard.press('KeyE'); else if (want < s.zero) await p.keyboard.press('KeyQ')

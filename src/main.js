@@ -1,6 +1,7 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
-import * as S from './sim.js?v=202610080840'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import * as S from './sim.js?v=202610081013'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -45,7 +46,7 @@ Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, n
 sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.05
 scene.add(sun, sun.target)
 
-// ================================================================ 地形
+// ================================================================ ステージ（地形・木・岩・建物）。ステージを変えたら作り直す
 function noiseTex(size, f) {
   const c = document.createElement('canvas'); c.width = c.height = size
   const x = c.getContext('2d'), img = x.createImageData(size, size)
@@ -54,8 +55,12 @@ function noiseTex(size, f) {
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; t.colorSpace = THREE.SRGBColorSpace
   return t
 }
+let wg = null
+function buildScene() {
+  if (wg) { scene.remove(wg); wg.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => { if (m.map && m.map !== ghillieTex) m.map.dispose(); m.dispose() }) }) }
+  wg = new THREE.Group(); scene.add(wg)
 {
-  const SIZE = 2400, SEG = 420
+  const SIZE = 2400, SEG = isTouch ? 300 : 420 // スマホは地形の細かさを落として軽く
   const g = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG).rotateX(-Math.PI / 2)
   const pos = g.attributes.position, col = new Float32Array(pos.count * 3)
   const c = new THREE.Color(), grass = new THREE.Color('#5d6b3a'), dry = new THREE.Color('#8f8a58'), rock = new THREE.Color('#77736a'), dirt = new THREE.Color('#6b5a43'), dark = new THREE.Color('#3f4a2a')
@@ -65,6 +70,12 @@ function noiseTex(size, f) {
     pos.setY(i, h)
     const n = (Math.sin(x * 0.031) + Math.cos(z * 0.027) + Math.sin((x + z) * 0.011)) / 6 + 0.5
     c.copy(grass).lerp(dry, Math.max(0, Math.min(1, n * 1.2 - 0.2 + (h - 40) / 160)))
+    if (S.STAGE === 'city' && Math.max(Math.abs(x), Math.abs(z)) < 540) {
+      // 市街地: 道路はアスファルト、街区の中は舗装。64m ごとの通り（幅16m）
+      const mx = ((x % 64) + 96) % 64 - 32, mz = ((z % 64) + 96) % 64 - 32
+      const road = Math.abs(mx) > 24 || Math.abs(mz) > 24
+      c.set(road ? '#55585b' : '#8d8a83')
+    }
     c.lerp(dark, Math.max(0, S.concealment(x, z) * 0.6))
     if (h < 12) c.lerp(dirt, (12 - h) / 12 * 0.6)
     c.lerp(rock, Math.max(0, Math.min(1, (sl - 0.45) * 2.2)))
@@ -80,7 +91,7 @@ function noiseTex(size, f) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 1, metalness: 0 })
   const ground = new THREE.Mesh(g, m)
   ground.receiveShadow = true
-  scene.add(ground)
+  wg.add(ground)
 }
 
 // ================================================================ 木・岩・廃屋（まとめて描く）
@@ -96,7 +107,7 @@ const dummy = new THREE.Object3D()
     const c = new THREE.Color(), r = S.rng(list.length)
     list.forEach((t, i) => { set(t, dummy); dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix); const k = 0.78 + r() * 0.34; c.setRGB(k * (0.95 + r() * 0.1), k, k * (0.9 + r() * 0.1)); m.setColorAt(i, c) }) // 木ごとに明るさを少し変える
     m.castShadow = cast; m.receiveShadow = true
-    scene.add(m)
+    wg.add(m)
     return m
   }
   inst(new THREE.CylinderGeometry(0.18, 0.32, 1, 6), trunkM, W.trees, (t, d) => { d.position.set(t.x, t.y + t.h * 0.35, t.z); d.scale.set(1, t.h * 0.7, 1); d.rotation.set(0, 0, 0) })
@@ -109,10 +120,11 @@ const dummy = new THREE.Object3D()
   inst(new THREE.IcosahedronGeometry(1, 1), leafM, broads, (t, d) => { d.position.set(t.x + t.r * 0.4, t.y + t.h * 0.78, t.z - t.r * 0.3); d.scale.set(t.r * 0.8, t.h * 0.24, t.r * 0.8); d.rotation.set(0, t.x % 6.28, 0) })
   // 岩
   const rockM = new THREE.MeshStandardMaterial({ color: '#7d786d', roughness: 0.95, flatShading: true })
-  inst(new THREE.DodecahedronGeometry(1, 0), rockM, W.rocks, (t, d) => { d.position.set(t.x, t.y + t.s * 0.25, t.z); d.scale.set(t.s, t.s * 0.6, t.s * 0.85); d.rotation.set(t.x % 1, t.z % 6, 0) })
+  if (W.rocks.length && W.rocks[0].car) { const carM = new THREE.MeshStandardMaterial({ color: '#6d7480', roughness: 0.4, metalness: 0.5 }); inst(new THREE.BoxGeometry(1.8, 1.4, 4.3), carM, W.rocks, (t, d) => { d.position.set(t.x, t.y + 0.7, t.z); d.scale.set(1, 1, 1); d.rotation.set(0, t.yaw, 0) }) }
+  else inst(new THREE.DodecahedronGeometry(1, 0), rockM, W.rocks, (t, d) => { d.position.set(t.x, t.y + t.s * 0.25, t.z); d.scale.set(t.s, t.s * 0.6, t.s * 0.85); d.rotation.set(t.x % 1, t.z % 6, 0) })
   // 低い茂み（見た目だけ。草原の手前を埋める）
   const r3 = S.rng(31), bushes = []
-  for (let k = 0; k < 2600; k++) { const x = (r3() * 2 - 1) * 790, z = (r3() * 2 - 1) * 790; if (S.slopeAt(x, z) > 0.6) continue; bushes.push({ x, z, y: S.heightAt(x, z), s: 0.4 + r3() * 0.7 }) }
+  for (let k = 0; k < (S.STAGE === 'city' ? 0 : 2600); k++) { const x = (r3() * 2 - 1) * 790, z = (r3() * 2 - 1) * 790; if (S.slopeAt(x, z) > 0.6) continue; bushes.push({ x, z, y: S.heightAt(x, z), s: 0.4 + r3() * 0.7 }) }
   inst(new THREE.IcosahedronGeometry(1, 0), leafM, bushes, (t, d) => { d.position.set(t.x, t.y + t.s * 0.3, t.z); d.scale.set(t.s * 1.3, t.s * 0.6, t.s); d.rotation.set(0, t.x % 6, 0) }, false)
   // 廃屋: 石の壁（崩れた屋根なし・屋根あり）
   const stoneM = new THREE.MeshStandardMaterial({ color: '#9a9284', roughness: 0.95 })
@@ -125,11 +137,51 @@ const dummy = new THREE.Object3D()
     wall(t, hh, h.d - t * 2, h.w / 2 - t / 2, 0); wall(t, h.ruin ? hh * 0.5 : hh, h.d - t * 2, -h.w / 2 + t / 2, 0)
     if (!h.ruin) for (const s of [1, -1]) { const m = new THREE.Mesh(new THREE.BoxGeometry(h.w + 0.6, 0.18, h.d / 2 + 0.9), roofM); m.position.set(0, hh + 0.9, s * h.d / 4); m.rotation.x = s * 0.55; m.castShadow = true; g.add(m) }
     g.position.set(h.x, h.y - 1, h.z)
-    scene.add(g)
+    wg.add(g)
   }
 }
 
+  if (S.STAGE === 'city') buildCity()
+}
+// 市街地の建物: 窓の並ぶ外壁（階ごと）、平らな屋上、縁の手すり壁
+let _winTex = null
+function windowTex() {
+  if (_winTex) return _winTex
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64
+  const x = c.getContext('2d')
+  x.fillStyle = '#d8d2c6'; x.fillRect(0, 0, 64, 64)
+  x.fillStyle = '#3a4550'; x.fillRect(10, 14, 44, 34)
+  x.fillStyle = 'rgba(255,255,255,.18)'; x.fillRect(10, 14, 44, 6)
+  x.fillStyle = 'rgba(0,0,0,.18)'; x.fillRect(0, 60, 64, 4)
+  _winTex = new THREE.CanvasTexture(c); _winTex.wrapS = _winTex.wrapT = THREE.RepeatWrapping; _winTex.colorSpace = THREE.SRGBColorSpace; _winTex.anisotropy = 8
+  return _winTex
+}
+function buildCity() {
+  const W = S.WORLD
+  const wallMs = ['#d8d2c6', '#c9cdd2', '#c8b9a2', '#b9b2a6'].map(col => new THREE.MeshStandardMaterial({ map: windowTex(), color: col, roughness: 0.85 }))
+  const roofM = new THREE.MeshStandardMaterial({ color: '#7d7f80', roughness: 0.95 })
+  const parM = new THREE.MeshStandardMaterial({ color: '#a8a49c', roughness: 0.9 })
+  // 色ごと・屋上・手すり壁をそれぞれ1つの形にまとめて描く（建物ごとに描くと重い）
+  const walls = [[], [], [], []], roofs = [], pars = []
+  for (const b of W.buildings) {
+    const g = new THREE.BoxGeometry(b.w, b.h, b.d), uv = g.attributes.uv
+    for (let v = 0; v < uv.count; v++) { const f = Math.floor(v / 4); const fw = f < 2 ? b.d : b.w; uv.setXY(v, uv.getX(v) * Math.max(1, Math.round(fw / 3.2)), uv.getY(v) * b.floors) }
+    const ni = g.toNonIndexed(); ni.translate(b.x, b.y + b.h / 2, b.z)
+    // 上下の面（6面中の3・4番目 = 頂点 12〜23）は取り除き、屋上は別の板にする
+    const pos = ni.attributes.position.array, nor = ni.attributes.normal.array, uvs = ni.attributes.uv.array, keep = []
+    for (let t = 0; t < pos.length / 9; t++) if (Math.abs(nor[t * 9 + 1]) < 0.5) keep.push(t)
+    const pick = (arr, n) => { const o = new Float32Array(keep.length * 3 * n); keep.forEach((t, k) => o.set(arr.subarray(t * 3 * n, t * 3 * n + 3 * n), k * 3 * n)); return o }
+    const wg2 = new THREE.BufferGeometry(); wg2.setAttribute('position', new THREE.BufferAttribute(pick(pos, 3), 3)); wg2.setAttribute('normal', new THREE.BufferAttribute(pick(nor, 3), 3)); wg2.setAttribute('uv', new THREE.BufferAttribute(pick(uvs, 2), 2))
+    walls[Math.floor(b.tint * 4)].push(wg2)
+    const rf = new THREE.PlaneGeometry(b.w, b.d).rotateX(-Math.PI / 2); rf.translate(b.x, b.y + b.h + 0.01, b.z); roofs.push(rf.toNonIndexed())
+  }
+  for (const bx of W.boxes) { if (!bx.wall) continue; const g = new THREE.BoxGeometry(bx.w, bx.h, bx.d); g.translate(bx.x, bx.y + bx.h / 2, bx.z); pars.push(g.toNonIndexed()) }
+  const add = (list, m) => { if (!list.length) return; for (const g of list) if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2)); const mesh = new THREE.Mesh(mergeGeometries(list, false), m); mesh.castShadow = mesh.receiveShadow = true; wg.add(mesh) }
+  walls.forEach((l, i) => add(l, wallMs[i])); add(roofs, roofM); add(pars, parM)
+}
+
 // ================================================================ 敵の狙撃手（ギリースーツ）・スコープの光
+buildScene()
 const ghillieTex = noiseTex(64, (() => { const r = S.rng(3); return () => 90 + r() * 120 })())
 ghillieTex.repeat.set(2, 2)
 const enemyViews = []
@@ -180,10 +232,10 @@ const viewRifle = new THREE.Group()
 }
 const trails = [], dust = []
 const puffTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c) })()
-function addPuff(x, y, z, color, size, life) {
+function addPuff(x, y, z, color, size, life, op = 0.6) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color, transparent: true, depthWrite: false }))
   s.position.set(x, y, z); s.scale.setScalar(size); scene.add(s)
-  dust.push({ s, t: 0, life, size })
+  dust.push({ s, t: 0, life, size, op })
 }
 
 // ================================================================ 音（その場で合成）
@@ -234,7 +286,8 @@ const SFX = {
   shot: () => { noise(0.09, 0.9, 3000, 'highpass', 0, null, 0, 0, 0.7, 0.15); noise(0.5, 0.6, 900, 'lowpass', 0, 120, 0, 0, 0.7, 0.6); tone(70, 0.4, 'sine', 0.5, 35) },
   bolt: () => { noise(0.05, 0.25, 2500, 'bandpass', 0.35, null, 0, 0, 4, 0.05); noise(0.06, 0.25, 1800, 'bandpass', 0.6, null, 0, 0, 4, 0.05); noise(0.05, 0.3, 3200, 'bandpass', 0.95, null, 0, 0, 5, 0.05) },
   dry: () => noise(0.04, 0.2, 3000, 'bandpass', 0, null, 0, 0, 6, 0.05),
-  reload: () => { for (const t of [0.2, 0.8, 1.4, 2.0, 2.6]) noise(0.05, 0.2, 2200, 'bandpass', t, null, 0, 0, 5, 0.05) },
+  reload: () => {},
+  round: (d = 0) => { noise(0.05, 0.22, 2200, 'bandpass', d, null, 0, 0, 5, 0.05); noise(0.04, 0.18, 3400, 'bandpass', d + 0.12, null, 0, 0, 6, 0.05) }, // 1発押し込む音
   // 遠くの銃声: 距離のぶん遅れて、高い音が削れて届く
   far: (d, pan) => { const far = Math.min(1, d / 1100), dl = d / S.SOUND_V; noise(0.12, 0.8 * (1 - far * 0.6), 2400, 'lowpass', dl, 300, pan, far, 0.7, 0.7); tone(55, 0.6, 'sine', 0.3 * (1 - far * 0.5), 30, dl, pan, far) },
   snap: (pan) => { noise(0.03, 0.9, 5000, 'highpass', 0, null, pan, 0, 0.7, 0.1); tone(1800, 0.05, 'square', 0.15, 600, 0, pan) },
@@ -301,7 +354,8 @@ if (isTouch) {
   btn('tFire', () => { pressed.fire = true })
   btn('tScope', () => setScope(!scoped))
   btn('tBreath', () => { touchHold = true; if (scoped) SFX.breathIn() }, () => { if (touchHold && scoped) SFX.breathOut(); touchHold = false })
-  btn('tStance', () => { const s = state.units[0].stance; pressed.stance = s === 'stand' ? 'crouch' : s === 'crouch' ? 'prone' : 'stand' })
+  btn('tStance', () => { pressed.stance = state.units[0].stance === 'crouch' ? 'stand' : 'crouch' })
+  btn('tProne', () => { pressed.stance = state.units[0].stance === 'prone' ? 'crouch' : 'prone' })
   btn('tReload', () => { pressed.reload = true })
   btn('tZoomUp', () => { pressed.zero = 1 }); btn('tZoomDn', () => { pressed.zero = -1 })
 }
@@ -353,7 +407,7 @@ function drawHud(st) {
   if (hud.st !== me.stance) { hud.st = me.stance; $('stanceUse').setAttribute('href', '#s-' + me.stance); $('stanceTxt').textContent = { stand: '立ち', crouch: 'しゃがみ', prone: '伏せ' }[me.stance] }
   const ammo = me.ammo + '/' + me.reloadT
   if (hud.ammo !== ammo) { hud.ammo = ammo; $('rounds').innerHTML = Array.from({ length: S.MAG }, (_, i) => `<i class="${i < me.ammo ? '' : 'out'}"></i>`).join('') }
-  $('bolt').textContent = me.reloadT > 0 ? '装填中' : me.boltT > 0 ? 'ボルト操作' : me.ammo === 0 ? '弾切れ R' : ''
+  $('bolt').textContent = me.reloadT > 0 ? `装填中 ${me.ammo}/${S.MAG}` : me.boltT > 0 ? 'ボルト操作' : me.ammo === 0 ? '弾切れ R' : ''
   if (hud.zero !== me.zero) { hud.zero = me.zero; $('zeroBig').textContent = me.zero; $('zeroTxt').textContent = 'ZERO ' + me.zero }
   const enemies = st.units.filter(u => !u.player).map(u => u.alive ? 1 : 0).join('')
   if (hud.en !== enemies) { hud.en = enemies; $('enemies').innerHTML = [...enemies].map(a => `<i class="${a === '1' ? '' : 'dead'}"></i>`).join('') + `<span class="tag mono" style="margin-left:6px">${[...enemies].filter(a => a === '1').length} 残り</span>` }
@@ -364,26 +418,31 @@ function drawHud(st) {
     $('breath').firstElementChild.style.transform = `scaleX(${me.breath / S.BREATH_MAX})`
     $('breath').classList.toggle('low', me.breath < 1.5)
   }
-  $('hint').hidden = !(st.t < 14)
+  $('hint').hidden = !(st.t < 14) || scoped // 構えている間は下の数字と重なるので出さない
 }
 function feed(html, bad) { const d = document.createElement('div'); d.className = 'feed' + (bad ? ' bad' : ''); d.innerHTML = html; $('feed').prepend(d); setTimeout(() => d.remove(), 3200); while ($('feed').children.length > 3) $('feed').lastElementChild.remove() }
 
 // ================================================================ 試合の進行
-let difficulty = 1
+let difficulty = 1, stage = 'valley'
+try { if (localStorage.getItem('rl-stage') === 'city') stage = 'city' } catch {}
+function setStageOpt(k) { stage = k; try { localStorage.setItem('rl-stage', k) } catch {} for (const b of document.querySelectorAll('.sopt')) b.setAttribute('aria-pressed', String(b.dataset.s === k)); if (mode === 'title' && S.STAGE !== k) { S.setStage(k); buildScene() } }
 try { difficulty = +localStorage.getItem('rl-diff') || 1 } catch {}
-function setDiff(d) { difficulty = d; try { localStorage.setItem('rl-diff', d) } catch {} for (const b of document.querySelectorAll('.opt')) b.setAttribute('aria-pressed', String(+b.dataset.d === d)) }
-for (const b of document.querySelectorAll('.opt')) b.addEventListener('click', () => setDiff(+b.dataset.d))
+function setDiff(d) { difficulty = d; try { localStorage.setItem('rl-diff', d) } catch {} for (const b of document.querySelectorAll('.opt:not(.sopt)')) b.setAttribute('aria-pressed', String(+b.dataset.d === d)) }
+for (const b of document.querySelectorAll('.opt:not(.sopt)')) b.addEventListener('click', () => setDiff(+b.dataset.d))
+for (const b of document.querySelectorAll('.sopt')) b.addEventListener('click', () => setStageOpt(b.dataset.s))
 setDiff(difficulty)
+setStageOpt(stage)
 function start() {
   ensureAudio()
-  for (const v of enemyViews) { scene.remove(v.g, v.glint) }
+  for (const v of enemyViews) if (v) scene.remove(v.g, v.glint) // 0番（自分）は空き
   enemyViews.length = 0
   for (const t of trails) scene.remove(t.l); trails.length = 0
   for (const d of dust) scene.remove(d.s); dust.length = 0
-  state = S.createState(Date.now() % 100000, { difficulty })
+  if (S.STAGE !== stage) { S.setStage(stage); buildScene() }
+  state = S.createState(Date.now() % 100000, { difficulty, stage })
   for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView()
   const me = state.units[0]
-  yaw = 0; pitch = -0.05; setScope(false); zoomI = 0; viewRifle.visible = true
+  yaw = 0; pitch = -0.05; setScope(false); zoomI = 0; viewRifle.visible = true; killcam = null
   mode = 'play'
   $('title').hidden = true; $('result').hidden = true; $('hud').hidden = false; $('touch').hidden = !isTouch
   updateRotate()
@@ -433,7 +492,12 @@ function handleEvents(evs) {
         }
         break
       case 'impact':
-        addPuff(e.x, e.y + 0.3, e.z, e.kind === 'ground' ? '#a8977a' : e.kind === 'hut' ? '#b8b0a2' : '#7d8a5a', e.kind === 'ground' ? 1.8 : 1.2, 1.1)
+        {
+          // 着弾の土煙: 自分の弾は遠くでも読めるよう大きく長く（外れた方向を見て修正できる）
+          const own = e.owner === 0, col = e.kind === 'ground' ? '#4e3d2b' : e.kind === 'hut' ? '#b8b0a2' : '#6f7d4c'
+          addPuff(e.x, e.y + 0.25, e.z, col, own ? 1.8 : 1.0, own ? 2.4 : 1.2, 1); if (own) addPuff(e.x, e.y + 0.9, e.z, '#c9b99a', 1.2, 1.8, 0.7) // 濃い土と、舞い上がる明るい砂ぼこり
+          if (own) { addPuff(e.x, e.y + 0.6, e.z, col, 0.8, 1.6, 0.8); for (let i = 0; i < 6; i++) addPuff(e.x + (Math.random() - 0.5), e.y + 0.4 + Math.random() * 1.2, e.z + (Math.random() - 0.5), '#5c4a36', 0.25, 0.7, 1) }
+        }
         if (e.owner === 0) SFX.impact(d, pan); else if (d < 60) SFX.impact(d, pan)
         break
       case 'snap': SFX.snap(pan); break
@@ -449,18 +513,23 @@ function handleEvents(evs) {
         break
       case 'kill':
         if (e.by === 0) { SFX.kill(); feed(`${e.part === 'head' ? 'ヘッドショット' : '命中'}　<b>${Math.round(e.dist)} m</b>　${state.units[e.id].name} を倒した`) }
-        if (e.id === 0) feed(`<b>撃たれた</b>　${Math.round(e.dist)} m 先の ${state.units[e.by].name}`, true)
+        if (e.id === 0) {
+          feed(`<b>撃たれた</b>　${Math.round(e.dist)} m 先の ${state.units[e.by].name}`, true)
+          // 倒された相手を見せる: 撃った敵の方へ向き、スコープで寄る（銃口の煙が見える）
+          const k = state.units[e.by]; killcam = { yaw: Math.atan2(k.x - me.x, k.z - me.z), pitch: Math.atan2(k.y + 1 - (me.y + 0.5), Math.hypot(k.x - me.x, k.z - me.z)), t: 0 }
+        }
         break
       case 'aim': break
-      case 'reload': SFX.reload(); break
+      case 'reload': SFX.round(0.15); break
+      case 'round': SFX.round(); break
       case 'dry': SFX.dry(); break
-      case 'over': setTimeout(showResult, 2600); if (scoped) setScope(false); break
+      case 'over': setTimeout(showResult, e.result === 'lose' ? 4200 : 2600); if (scoped && e.result === 'win') setScope(false); break
     }
   }
 }
 
 // ================================================================ 毎フレーム
-let kick = 0, swayView = { x: 0, y: 0 }
+let kick = 0, swayView = { x: 0, y: 0 }, killcam = null
 function fixedStep() {
   const input = { ...readInput(), ...pressed }
   for (const k in pressed) delete pressed[k]
@@ -497,7 +566,7 @@ function updateViews(dt) {
     const d = dust[i]; d.t += dt
     const k = d.t / d.life
     if (!d.flash) { d.s.scale.setScalar(d.size * (1 + k * 2.5)); d.s.position.y += dt * 0.6 }
-    d.s.material.opacity = (d.flash ? 1 : 0.6) * Math.max(0, 1 - k)
+    d.s.material.opacity = (d.flash ? 1 : d.op ?? 0.6) * Math.max(0, 1 - k * k)
     if (d.t > d.life) { scene.remove(d.s); d.s.material.dispose(); dust.splice(i, 1) }
   }
   if (windGain && actx) { windGain.gain.setTargetAtTime(0.012 + st.wind.speed * 0.006, actx.currentTime, 0.5); windFilter.frequency.setTargetAtTime(250 + st.wind.speed * 60, actx.currentTime, 0.5) }
@@ -514,6 +583,7 @@ function applyCamera(dt) {
   const ly = yaw + swayView.x, lp = pitch + swayView.y + kick * 0.02
   camera.lookAt(eye.x + Math.sin(ly) * Math.cos(lp), eye.y + bob + Math.sin(lp), eye.z + Math.cos(ly) * Math.cos(lp))
   kick = Math.max(0, kick - dt * 5)
+  if (killcam) { killcam.t += dt; if (killcam.t > 0.6) { yaw += ((killcam.yaw - yaw + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 3); pitch += (killcam.pitch - pitch) * Math.min(1, dt * 3); if (killcam.t > 1.1 && !scoped) { setScope(true); zoomI = 0 } } }
   const want = scoped ? BASE_FOV / ZOOMS[zoomI] : BASE_FOV
   if (Math.abs(camera.fov - want) > 0.01) { camera.fov += (want - camera.fov) * Math.min(1, dt * 18); camera.updateProjectionMatrix(); if (scoped) drawRing() }
   viewRifle.position.set(0.17 + Math.sin(st.t * 4.5) * bob * 0.6, -0.19 + bob * 0.5 - kick * 0.02, -0.42 + kick * 0.05)
@@ -537,7 +607,7 @@ function frame(now) {
     viewRifle.visible = false // タイトルでは自分の銃を写さない
     camera.fov = BASE_FOV; camera.updateProjectionMatrix()
     const a = titleT * 0.03, x = Math.sin(a) * 320, z = -420 + Math.cos(a) * 120
-    camera.position.set(x, S.heightAt(x, z) + 24, z); camera.lookAt(0, 40, 150)
+    camera.position.set(x, S.heightAt(x, z) + (S.STAGE === 'city' ? 70 : 24), z); camera.lookAt(0, S.STAGE === 'city' ? 30 : 40, 150)
     sun.target.position.set(x, 0, z); sun.position.set(x + SUN.x * 200, SUN.y * 200, z + SUN.z * 200); sky.position.copy(camera.position)
     render(); return
   }
@@ -562,7 +632,7 @@ window.rl = {
   raw: () => state,
   zoom(i) { zoomI = i },
   h: (x, z) => S.heightAt(x, z),
-  start(opts = {}) { start(); if (opts.enemies !== undefined || opts.seed) { state = S.createState(opts.seed ?? 7, { difficulty, ...opts }); for (const v of enemyViews) if (v) scene.remove(v.g, v.glint); enemyViews.length = 0; for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView() } },
+  start(opts = {}) { start(); if (opts.enemies !== undefined || opts.seed) { state = S.createState(opts.seed ?? 7, { difficulty, stage, ...opts }); for (const v of enemyViews) if (v) scene.remove(v.g, v.glint); enemyViews.length = 0; for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView() } },
   pause(v = true) { paused = v },
   look(y, p) { yaw = y; pitch = p },
   scope(v) { setScope(v) },

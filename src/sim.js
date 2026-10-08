@@ -10,6 +10,7 @@ export const SOUND_V = 343           // 音速
 export const BOLT_T = 1.4            // ボルトを引いて次弾を込める時間
 export const MAG = 5                 // 弾倉
 export const RELOAD_T = 3.2
+export const RELOAD_START = 0.5, RELOAD_ROUND = 0.6 // 装填: 構え直しに0.5秒、そのあと1発0.6秒ずつ込める（途中で撃てる）
 export const ZERO_MIN = 100, ZERO_MAX = 800, ZERO_STEP = 50
 export const EYE = { stand: 1.62, crouch: 1.05, prone: 0.32 }
 export const SPEED = { stand: 3.6, crouch: 1.8, prone: 0.7, sprint: 6.2 }
@@ -33,7 +34,10 @@ function fbm(x, z, seed, oct = 5) { let s = 0, a = 0.5, f = 1; for (let o = 0; o
 // ---------------------------------------------------------------- 地形
 // 谷を挟んで東西に尾根が走り、外周は山で囲む。中央の谷底に小川の跡と廃村
 const TSEED = 4242
-export function heightAt(x, z) {
+export let STAGE = 'valley'
+export function heightAt(x, z) { return STAGE === 'city' ? cityHeight(x, z) : valleyHeight(x, z) }
+function cityHeight(x, z) { return 6 + fbm(x / 700, z / 700, 77, 3) * 10 + Math.max(0, Math.max(Math.abs(x), Math.abs(z)) - 560) ** 1.4 * 0.04 }
+function valleyHeight(x, z) {
   const base = fbm(x / 520, z / 520, TSEED) * 70
   const ridge = Math.pow(1 - Math.abs(2 * fbm(x / 260 + 7, z / 260 - 3, TSEED + 9, 4) - 1), 2) * 38 // 尾根筋
   const valley = Math.exp(-((x + 40 * Math.sin(z / 230)) ** 2) / (2 * 150 * 150)) * 46            // 南北に走る谷
@@ -72,12 +76,59 @@ function buildWorld() {
     }
   }
   place(-30, 40, 9, 70); place(60, -260, 4, 40); place(-320, 380, 3, 30); place(360, 420, 3, 30)
-  // 木を当たりの格子に入れる（40m 角）
-  const CELL = 40, grid = new Map()
-  for (const [i, t] of trees.entries()) { const key = Math.floor(t.x / CELL) + ',' + Math.floor(t.z / CELL); if (!grid.has(key)) grid.set(key, []); grid.get(key).push(i) }
-  return { trees, rocks, huts, grid, CELL }
+  return finishWorld({ trees, rocks, huts, buildings: [], boxes: huts.map(h => ({ x: h.x, z: h.z, w: h.w, d: h.d, y: h.y - 1, h: h.h + 1 })) })
 }
-export const WORLD = buildWorld()
+// 市街地: 60m の街区に建物を並べる。屋上は平らで、縁に手すり壁（1m）。建物は弾も視線も通さない
+function buildCity() {
+  const r = rng(909)
+  const trees = [], rocks = [], huts = [], buildings = []
+  const B = 64, ST = 16 // 街区の間隔と道路の幅
+  for (let gx = -8; gx <= 8; gx++) for (let gz = -8; gz <= 8; gz++) {
+    const cx = gx * B, cz = gz * B
+    if (Math.max(Math.abs(cx), Math.abs(cz)) > 520) continue
+    if (r() < 0.12) { // 公園: 木を植える
+      for (let i = 0; i < 6; i++) { const x = cx + (r() - 0.5) * (B - ST - 6), z = cz + (r() - 0.5) * (B - ST - 6); trees.push({ x, z, y: heightAt(x, z), h: 8 + r() * 6, r: 1.8 + r() * 1.2, kind: 'broad' }) }
+      continue
+    }
+    const inner = B - ST
+    const n = r() < 0.5 ? 1 : 2
+    for (let i = 0; i < n; i++) {
+      const w = n === 1 ? inner - 4 - r() * 8 : inner / 2 - 3, d = inner - 4 - r() * 10
+      const x = n === 1 ? cx : cx + (i ? 1 : -1) * (inner / 4 + 0.5), z = cz
+      const center = 1 - Math.min(1, Math.hypot(cx, cz) / 520)
+      const floors = 2 + Math.floor(r() * (4 + center * 10))
+      const y = Math.min(heightAt(x - w / 2, z - d / 2), heightAt(x + w / 2, z + d / 2), heightAt(x - w / 2, z + d / 2), heightAt(x + w / 2, z - d / 2)) - 0.5
+      const h = floors * 3.2 + 0.5
+      buildings.push({ x, z, w, d, y, h, floors, tint: r() })
+    }
+  }
+  // 箱: 建物本体と、屋上の縁の手すり壁（外を見張れる高さ。伏せると隠れる）
+  const boxes = []
+  for (const b of buildings) {
+    boxes.push({ x: b.x, z: b.z, w: b.w, d: b.d, y: b.y, h: b.h })
+    const top = b.y + b.h, t = 0.35, ph = 0.9 // しゃがむと目（1.05m）が出て、伏せると隠れる高さ
+    boxes.push({ x: b.x, z: b.z + b.d / 2 - t / 2, w: b.w, d: t, y: top, h: ph, wall: true }, { x: b.x, z: b.z - b.d / 2 + t / 2, w: b.w, d: t, y: top, h: ph, wall: true },
+      { x: b.x + b.w / 2 - t / 2, z: b.z, w: t, d: b.d, y: top, h: ph, wall: true }, { x: b.x - b.w / 2 + t / 2, z: b.z, w: t, d: b.d, y: top, h: ph, wall: true })
+  }
+  for (let i = 0; i < 300; i++) { const x = (r() * 2 - 1) * 520, z = (r() * 2 - 1) * 520; if (boxes.some(b => Math.abs(x - b.x) < b.w / 2 + 2 && Math.abs(z - b.z) < b.d / 2 + 2)) continue; if (r() < 0.6) trees.push({ x, z, y: heightAt(x, z), h: 6 + r() * 4, r: 1.4 + r() * 0.8, kind: 'broad' }); else rocks.push({ x, z, y: heightAt(x, z), s: 0.8 + r() * 0.8, car: true, yaw: r() * 3 }) }
+  return finishWorld({ trees, rocks, huts, buildings, boxes })
+}
+function finishWorld(w) {
+  const CELL = 40, grid = new Map(), bgrid = new Map()
+  for (const [i, t] of w.trees.entries()) { const key = Math.floor(t.x / CELL) + ',' + Math.floor(t.z / CELL); if (!grid.has(key)) grid.set(key, []); grid.get(key).push(i) }
+  // 箱の格子（箱が掛かるマスすべてに入れる）
+  for (const [i, b] of w.boxes.entries()) for (let gx = Math.floor((b.x - b.w / 2) / CELL); gx <= Math.floor((b.x + b.w / 2) / CELL); gx++) for (let gz = Math.floor((b.z - b.d / 2) / CELL); gz <= Math.floor((b.z + b.d / 2) / CELL); gz++) { const key = gx + ',' + gz; if (!bgrid.has(key)) bgrid.set(key, []); bgrid.get(key).push(i) }
+  return { ...w, grid, bgrid, CELL }
+}
+const WORLDS = {}
+export let WORLD = null
+export function setStage(k) {
+  STAGE = k === 'city' ? 'city' : 'valley'
+  if (!WORLDS[STAGE]) WORLDS[STAGE] = STAGE === 'city' ? buildCity() : buildWorld()
+  WORLD = WORLDS[STAGE]
+  return WORLD
+}
+setStage('valley')
 const nearTrees = (x, z) => WORLD.grid.get(Math.floor(x / WORLD.CELL) + ',' + Math.floor(z / WORLD.CELL)) || []
 // その場所が木の陰（樹冠の下）か: 見つかりにくくなる
 export function concealment(x, z) {
@@ -85,18 +136,39 @@ export function concealment(x, z) {
   for (const i of nearTrees(x, z)) { const t = WORLD.trees[i], d = Math.hypot(t.x - x, t.z - z); if (d < t.r * 1.3) c = Math.max(c, 1 - d / (t.r * 1.3)) }
   return c
 }
-function inHut(x, y, z) { for (const h of WORLD.huts) if (y < h.y + h.h && y > h.y - 1 && Math.abs(x - h.x) < h.w / 2 && Math.abs(z - h.z) < h.d / 2) return h; return null }
+const nearBoxes = (x, z) => WORLD.bgrid.get(Math.floor(x / WORLD.CELL) + ',' + Math.floor(z / WORLD.CELL)) || []
+function inHut(x, y, z) { for (const i of nearBoxes(x, z)) { const b = WORLD.boxes[i]; if (y < b.y + b.h && y > b.y && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) return b } return null }
+// 立てる高さ: 地面か、足元より下にある屋上・箱の上面のうち一番高いもの
+export function supportAt(x, z, y) {
+  let g = heightAt(x, z)
+  for (const i of nearBoxes(x, z)) { const b = WORLD.boxes[i], top = b.y + b.h; if (top > g && top <= y + 0.6 && Math.abs(x - b.x) <= b.w / 2 && Math.abs(z - b.z) <= b.d / 2) g = top }
+  return g
+}
+// 線分が箱を横切るか（薄い手すり壁も見落とさない）
+function segBox(ax, ay, az, bx, by, bz, b) {
+  const o = [ax, ay, az], d = [bx - ax, by - ay, bz - az], mn = [b.x - b.w / 2, b.y, b.z - b.d / 2], mx = [b.x + b.w / 2, b.y + b.h, b.z + b.d / 2]
+  let t0 = 0, t1 = 1
+  for (let i = 0; i < 3; i++) { if (Math.abs(d[i]) < 1e-9) { if (o[i] < mn[i] || o[i] > mx[i]) return -1; continue } let ta = (mn[i] - o[i]) / d[i], tb = (mx[i] - o[i]) / d[i]; if (ta > tb) [ta, tb] = [tb, ta]; t0 = Math.max(t0, ta); t1 = Math.min(t1, tb); if (t0 > t1) return -1 }
+  return t0
+}
+function segHitsBoxes(ax, ay, az, bx, by, bz) {
+  const seen = new Set(); let best = -1, bb = null
+  const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / (WORLD.CELL * 0.5)))
+  for (let k = 0; k <= n; k++) { const x = ax + (bx - ax) * k / n, z = az + (bz - az) * k / n
+    for (const i of nearBoxes(x, z)) { if (seen.has(i)) continue; seen.add(i); const t = segBox(ax, ay, az, bx, by, bz, WORLD.boxes[i]); if (t >= 0 && (best < 0 || t < best)) { best = t; bb = WORLD.boxes[i] } } }
+  return best < 0 ? null : { t: best, b: bb }
+}
 
 // 見通し: 地形・樹冠・幹・廃屋の壁がさえぎる。dens は樹冠を何割で通すか（0=全部さえぎる）
 export function lineOfSight(ax, ay, az, bx, by, bz, foliage = 0.35) {
   const dx = bx - ax, dy = by - ay, dz = bz - az, len = Math.hypot(dx, dy, dz)
+  if (segHitsBoxes(ax, ay, az, bx, by, bz)) return 0
   const n = Math.max(2, Math.ceil(len / 3))
   let thru = 1
   const seen = new Set()
   for (let i = 1; i < n; i++) {
     const t = i / n, x = ax + dx * t, y = ay + dy * t, z = az + dz * t
     if (y < heightAt(x, z) + 0.15) return 0
-    if (inHut(x, y, z)) return 0
     for (const k of nearTrees(x, z)) {
       if (seen.has(k)) continue
       const tr = WORLD.trees[k], hd = Math.hypot(tr.x - x, tr.z - z)
@@ -141,7 +213,7 @@ function stepBullet(st, b) {
       if (hit) return { kind: 'unit', u, part: hit.part, x: hit.x, y: hit.y, z: hit.z }
     }
     if (b.y < heightAt(b.x, b.z)) return { kind: 'ground', x: b.x, y: heightAt(b.x, b.z), z: b.z }
-    const h = inHut(b.x, b.y, b.z); if (h) return { kind: 'hut', x: b.x, y: b.y, z: b.z }
+    const hb = segHitsBoxes(ox, oy, oz, b.x, b.y, b.z); if (hb) return { kind: 'hut', x: ox + (b.x - ox) * hb.t, y: oy + (b.y - oy) * hb.t, z: oz + (b.z - oz) * hb.t }
     for (const k of nearTrees(b.x, b.z)) { const t = WORLD.trees[k]; if (Math.hypot(t.x - b.x, t.z - b.z) < 0.35 && b.y < t.y + t.h * 0.6) return { kind: 'tree', x: b.x, y: b.y, z: b.z } }
     if (Math.abs(b.x) > HALF + 200 || Math.abs(b.z) > HALF + 200 || b.t > 4) return { kind: 'lost' }
   }
@@ -183,10 +255,13 @@ export function createState(seed = Date.now(), opts = {}) {
     units: [], bullets: [], events: [], stats: { shots: 0, hits: 0, kills: 0, longest: 0, headshots: 0 },
     enemyN: opts.enemies ?? ENEMY_N, difficulty: opts.difficulty ?? 1,
   }
+  setStage(opts.stage)
+  st.stage = STAGE
   setWind(st, true)
-  // 自分: 南の尾根の上
-  const ps = findSpot(st, 0, -560, 120, s => s.h)
+  // 自分: 谷は南の尾根の上。市街地は南の中くらいの高さの建物の屋上
+  const ps = STAGE === 'city' ? roofSpot(st, b => b.z < -200 && b.z > -330 && Math.abs(b.x) < 260 && b.h > 10 && b.h < 30) : findSpot(st, 0, -560, 120, s => s.h)
   st.units.push(makeUnit(0, ps.x, ps.z, true, 'あなた'))
+  st.units[0].y = supportAt(ps.x, ps.z, 999)
   st.units[0].yaw = 0
   // 敵: 自分から350m 以上離れた高い所・木の近くに散らす
   const spots = []
@@ -196,6 +271,19 @@ export function createState(seed = Date.now(), opts = {}) {
       const x = (r() * 2 - 1) * (HALF - 80), z = -400 + r() * (HALF - 80 + 400)
       const dd = Math.hypot(x - ps.x, z - ps.z)
       if (dd < 350 || dd > 750 || spots.some(s => Math.hypot(s.x - x, s.z - z) < 140)) continue
+      if (STAGE === 'city') {
+        // 市街地: 屋上（7割）か通り
+        let rx = x, rz = z
+        const roof = WORLD.buildings.filter(b => Math.abs(b.x - x) < b.w / 2 - 1.5 && Math.abs(b.z - z) < b.d / 2 - 1.5)[0]
+        if (!roof && (inHut(x, heightAt(x, z) + 1, z) || r() < 0.7)) continue
+        // 屋上なら、自分の側の縁まで寄せる（手すり壁越しに見張る）
+        if (roof) { const sz = Math.sign(ps.z - roof.z) || -1; rz = roof.z + sz * (roof.d / 2 - 1.2) }
+        const ey = (roof ? roof.y + roof.h : heightAt(rx, rz)) + EYE.crouch
+        const view = lineOfSight(rx, ey, rz, ps.x, supportAt(ps.x, ps.z, 999) + 1.5, ps.z, 1) > 0.5 ? 40 : 0
+        const sc = (roof ? roof.h * 0.4 : 0) + view + r() * 20
+        if (!best || sc > best.sc) best = { x: rx, z: rz, sc }
+        continue
+      }
       if (slopeAt(x, z) > 0.55 || inHut(x, heightAt(x, z) + 1, z)) continue
       const sc = heightAt(x, z) * 0.6 + concealment(x, z) * 30 + r() * 20
       if (!best || sc > best.sc) best = { x, z, sc }
@@ -203,7 +291,8 @@ export function createState(seed = Date.now(), opts = {}) {
     if (!best) best = { x: (r() * 2 - 1) * 400, z: 200 + r() * 400 }
     spots.push(best)
     const e = makeUnit(i + 1, best.x, best.z, false, ENEMY_NAMES[i % ENEMY_NAMES.length])
-    e.stance = r() < 0.6 ? 'prone' : 'crouch'
+    e.y = supportAt(e.x, e.z, 999)
+    e.stance = STAGE === 'city' ? 'crouch' : r() < 0.6 ? 'prone' : 'crouch' // 市街地の屋上は手すり壁越しにしゃがんで見張る
     e.yaw = Math.atan2(ps.x - e.x, ps.z - e.z) + (r() - 0.5) * 1.6
     e.ai = { awareness: 0, aimT: -1, cool: 2 + r() * 4, lastKnown: null, moveTo: null, scanYaw: e.yaw, scanT: 0, err: 0, idle: r() * 15 }
     st.units.push(e)
@@ -213,6 +302,11 @@ export function createState(seed = Date.now(), opts = {}) {
 function makeUnit(id, x, z, player, name) {
   return { id, name, player, x, z, y: heightAt(x, z), vx: 0, vz: 0, yaw: 0, pitch: 0, stance: 'stand', hp: PLAYER_HP, alive: true,
     ammo: MAG, boltT: 0, reloadT: 0, breath: BREATH_MAX, holding: false, swayX: 0, swayY: 0, moved: 0, zero: 300, recoil: 0 }
+}
+function roofSpot(st, pick) {
+  const cand = WORLD.buildings.filter(pick)
+  const b = cand.length ? cand[Math.floor(st.rand() * cand.length)] : WORLD.buildings[0]
+  return { x: b.x + (st.rand() - 0.5) * (b.w - 4), z: b.z + (st.rand() - 0.5) * (b.d - 4) }
 }
 function findSpot(st, cx, cz, rad, score) {
   let best = { x: cx, z: cz, sc: -1e9 }
@@ -280,9 +374,11 @@ function stepPlayer(st, u, input) {
   const wx = (fx * -mz + rx * mx) * sp, wz = (fz * -mz + rz * mx) * sp
   u.vx += (wx - u.vx) * Math.min(1, dt * 10); u.vz += (wz - u.vz) * Math.min(1, dt * 10)
   const nx = Math.max(-HALF, Math.min(HALF, u.x + u.vx * dt)), nz = Math.max(-HALF, Math.min(HALF, u.z + u.vz * dt))
-  const rise = heightAt(nx, nz) - heightAt(u.x, u.z), runLen = Math.hypot(nx - u.x, nz - u.z)
-  if (!(runLen > 0 && rise / runLen > 1.1) && !inHut(nx, heightAt(nx, nz) + 0.8, nz)) { u.x = nx; u.z = nz }
-  u.y = heightAt(u.x, u.z)
+  const g0 = supportAt(u.x, u.z, u.y), g1 = supportAt(nx, nz, u.y), runLen = Math.hypot(nx - u.x, nz - u.z)
+  if (!(runLen > 0 && (g1 - g0) / runLen > 1.1) && !inHut(nx, u.y + 0.7, nz) && !inHut(nx, u.y + 1.4, nz)) { u.x = nx; u.z = nz }
+  // 足場: 段差を下りるときは落ちる（屋上から飛び降りられる）
+  const g = supportAt(u.x, u.z, u.y)
+  if (u.y > g + 0.05) { u.vy = (u.vy || 0) - G * dt; u.y = Math.max(g, u.y + u.vy * dt) } else { u.y = g; u.vy = 0 }
   const speed = Math.hypot(u.vx, u.vz)
   u.moved = Math.max(0, Math.max(u.moved - dt * 0.8, speed / SPEED.sprint))
   // 息: スコープ中に押している間止める。尽きたら苦しくて大きく揺れる。離すと戻る
@@ -300,10 +396,15 @@ function stepPlayer(st, u, input) {
   u.recoil = Math.max(0, u.recoil - dt * 0.12)
   // 撃つ・ボルト・装填
   u.boltT = Math.max(0, u.boltT - dt)
-  if (u.reloadT > 0) { u.reloadT -= dt; if (u.reloadT <= 0) { u.ammo = MAG; st.events.push({ type: 'reloaded' }) } }
-  if (input.reload && u.ammo < MAG && u.reloadT <= 0 && u.boltT <= 0) { u.reloadT = RELOAD_T; st.events.push({ type: 'reload' }) }
+  // 装填: 1発ずつ込める。弾が1発でもあれば撃って中断できる
+  if (u.reloadT > 0) {
+    u.reloadT -= dt
+    if (u.reloadT <= 0) { u.ammo++; st.events.push({ type: 'round', ammo: u.ammo }); u.reloadT = u.ammo < MAG ? RELOAD_ROUND : 0; if (!u.reloadT) st.events.push({ type: 'reloaded' }) }
+  }
+  if (input.reload && u.ammo < MAG && u.reloadT <= 0 && u.boltT <= 0) { u.reloadT = RELOAD_START + RELOAD_ROUND; st.events.push({ type: 'reload' }) }
+  if (input.fire && u.reloadT > 0 && u.ammo > 0) { u.reloadT = 0; st.events.push({ type: 'reloaded' }) } // 込めている途中で撃つ
   if (input.fire && u.boltT <= 0 && u.reloadT <= 0) {
-    if (u.ammo <= 0) { st.events.push({ type: 'dry' }); u.reloadT = RELOAD_T; st.events.push({ type: 'reload' }) }
+    if (u.ammo <= 0) { st.events.push({ type: 'dry' }); u.reloadT = RELOAD_START + RELOAD_ROUND; st.events.push({ type: 'reload' }) }
     else {
       fire(st, u, u.yaw + u.swayX, u.pitch + u.swayY + zeroAngle(u.zero))
       u.ammo--; u.boltT = BOLT_T; u.recoil = 0.035; u.moved = Math.max(u.moved, 0.35)
@@ -357,8 +458,8 @@ function stepEnemy(st, e) {
   // 移動中
   if (ai.moveTo) {
     const dx = ai.moveTo.x - e.x, dz = ai.moveTo.z - e.z, d = Math.hypot(dx, dz)
-    if (d < 1.5) { ai.moveTo = null; e.stance = st.rand() < 0.65 ? 'prone' : 'crouch'; e.moved = 0.3 }
-    else { const sp = SPEED.crouch * 1.1; e.x += dx / d * sp * dt; e.z += dz / d * sp * dt; e.y = heightAt(e.x, e.z); e.yaw = Math.atan2(dx, dz); e.moved = 0.7; return }
+    if (d < 1.5) { ai.moveTo = null; e.stance = STAGE === 'city' || st.rand() >= 0.65 ? 'crouch' : 'prone'; e.moved = 0.3 }
+    else { const sp = SPEED.crouch * 1.1; e.x += dx / d * sp * dt; e.z += dz / d * sp * dt; e.y = supportAt(e.x, e.z, e.y + 0.5); e.yaw = Math.atan2(dx, dz); e.moved = 0.7; return }
   }
   e.moved = Math.max(0, e.moved - dt * 0.5)
   const ee = eyeOf(e)
@@ -371,9 +472,13 @@ function stepEnemy(st, e) {
   let seen = 0
   if (me.alive && d < 1200 && facing > -0.2) {
     const range = visibleRange(me) * (0.75 + 0.35 * Math.max(0, facing)) * (0.8 + 0.2 * diff)
-    if (d < range) seen = lineOfSight(ee.x, ee.y, ee.z, me_c.x, me_c.y, me_c.z)
+    if (d < range) {
+      // 胴が隠れていても頭が出ていれば見える（手すり壁の陰からのぞいたとき）。見えた方を狙う
+      seen = lineOfSight(ee.x, ee.y, ee.z, me_c.x, me_c.y, me_c.z); ai.aimHead = false
+      if (seen <= 0.15) { const hp = bodyPoints(me).head; const sh = lineOfSight(ee.x, ee.y, ee.z, hp[0], hp[1], hp[2]) * 0.6; if (sh > 0.15) { seen = sh; ai.aimHead = true } }
+    }
   }
-  if (seen > 0.15) { ai.awareness = Math.min(1, ai.awareness + dt * (0.35 + 0.5 * seen) * (1 + (1 - d / 1200)) * diff); ai.lastKnown = { x: me.x, z: me.z } }
+  if (seen > 0.15) { ai.awareness = Math.min(1, ai.awareness + dt * (0.35 + 0.5 * seen) * (1 + (1 - d / 1200)) * diff * Math.min(1, st.t / 12)); ai.lastKnown = { x: me.x, z: me.z } } // 出撃直後の12秒は気づきにくい（構える時間をくれる）
   else ai.awareness = Math.max(0, ai.awareness - dt * 0.04)
   e.yaw += (((look - e.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 1.5)
   ai.cool = Math.max(0, ai.cool - dt)
@@ -385,7 +490,7 @@ function stepEnemy(st, e) {
     if (ai.aimT <= 0) {
       e.aiming = false; ai.aimT = -1
       // 狙い: 自分の胴へ弾道を合わせ（ゼロインを距離に合わせる）、誤差を乗せる。距離・相手の動き・伏せで外れやすい
-      const tgt = { x: me.x + me.vx * (d / MUZZLE_V), y: me.y + EYE[me.stance] * (me.stance === 'prone' ? 0.6 : 0.62), z: me.z + me.vz * (d / MUZZLE_V) }
+      const tgt = { x: me.x + me.vx * (d / MUZZLE_V), y: ai.aimHead ? bodyPoints(me).head[1] : me.y + EYE[me.stance] * (me.stance === 'prone' ? 0.6 : 0.62), z: me.z + me.vz * (d / MUZZLE_V) }
       const dx = tgt.x - ee.x, dy = tgt.y - ee.y, dz = tgt.z - ee.z, hd = Math.hypot(dx, dz)
       const sigma = (0.0007 + hd / 1000 * 0.0008 + Math.min(1, me.moved) * 0.003 + (me.stance === "prone" ? 0.0004 : 0)) / diff
       const g = () => (st.rand() + st.rand() + st.rand() - 1.5) * 1.15
@@ -400,7 +505,8 @@ function stepEnemy(st, e) {
       if (st.rand() < 0.75) {
         const a = st.rand() * Math.PI * 2, rr = 40 + st.rand() * 50
         const nx = Math.max(-HALF + 20, Math.min(HALF - 20, e.x + Math.cos(a) * rr)), nz = Math.max(-HALF + 20, Math.min(HALF - 20, e.z + Math.sin(a) * rr))
-        if (slopeAt(nx, nz) < 0.6) { ai.moveTo = { x: nx, z: nz }; e.stance = 'crouch' }
+        const ok = STAGE === 'city' ? Math.abs(supportAt(nx, nz, e.y + 0.5) - e.y) < 0.3 && !inHut(nx, e.y + 0.7, nz) && segHitsBoxes(e.x, e.y + 0.7, e.z, nx, e.y + 0.7, nz) === null : slopeAt(nx, nz) < 0.6
+        if (ok) { ai.moveTo = { x: nx, z: nz }; e.stance = 'crouch' }
       }
     }
     return
@@ -417,7 +523,7 @@ function stepEnemy(st, e) {
       for (let k = 0; k < 14; k++) {
         const step = 60 + st.rand() * 60, a = Math.atan2(tx - e.x, tz - e.z) + (st.rand() - 0.5) * 1.4
         const nx = Math.max(-HALF + 20, Math.min(HALF - 20, e.x + Math.sin(a) * step)), nz = Math.max(-HALF + 20, Math.min(HALF - 20, e.z + Math.cos(a) * step))
-        if (slopeAt(nx, nz) > 0.6 || inHut(nx, heightAt(nx, nz) + 1, nz)) continue
+        if (STAGE === 'city' ? (Math.abs(supportAt(nx, nz, e.y + 0.5) - e.y) > 0.3 || segHitsBoxes(e.x, e.y + 0.7, e.z, nx, e.y + 0.7, nz) !== null) : (slopeAt(nx, nz) > 0.6 || inHut(nx, heightAt(nx, nz) + 1, nz))) continue
         const sc = heightAt(nx, nz) * 0.3 + concealment(nx, nz) * 25 + st.rand() * 8
         if (!best || sc > best.sc) best = { x: nx, z: nz, sc }
       }
