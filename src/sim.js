@@ -31,7 +31,7 @@ function vnoise(x, z, seed) {
   const a = hash(i, j, seed), b = hash(i + 1, j, seed), c = hash(i, j + 1, seed), d = hash(i + 1, j + 1, seed)
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
 }
-function fbm(x, z, seed, oct = 5) { let s = 0, a = 0.5, f = 1; for (let o = 0; o < oct; o++) { s += a * vnoise(x * f, z * f, seed + o * 17); f *= 2.03; a *= 0.5 } return s }
+export function fbm(x, z, seed, oct = 5) { let s = 0, a = 0.5, f = 1; for (let o = 0; o < oct; o++) { s += a * vnoise(x * f, z * f, seed + o * 17); f *= 2.03; a *= 0.5 } return s }
 
 // ---------------------------------------------------------------- 地形
 // 谷を挟んで東西に尾根が走り、外周は山で囲む。中央の谷底に小川の跡と廃村

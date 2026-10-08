@@ -65,6 +65,7 @@
   #glare{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
   /* スコープ: 円の外は黒、十字とミルドット。下に距離計とゼロイン */
   #scope{position:absolute;inset:0;pointer-events:none}
+  #scopeShadow{position:absolute;left:50%;top:50%;width:400vmax;height:400vmax;margin:-200vmax 0 0 -200vmax;will-change:transform}
   #scope svg.ring{position:absolute;inset:0;width:100%;height:100%}
   #scopeInfo{position:absolute;left:50%;bottom:calc(14% + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:22px;font-family:var(--mono);font-size:14px;color:var(--amber);letter-spacing:.08em;text-shadow:0 0 6px #000}
   #breath{position:absolute;left:50%;bottom:calc(10% + env(safe-area-inset-bottom));transform:translateX(-50%);width:160px;height:3px;background:rgba(233,228,214,.2)} #breath i{display:block;height:100%;background:var(--paper);transform-origin:left}
@@ -131,6 +132,7 @@
   <div id="wind"><svg viewBox="-20 -20 40 40"><circle r="17" fill="none" stroke="rgba(233,228,214,.35)" stroke-width="1"/><g id="windArrow"><path d="M0 -13 L5 -3 L1.5 -3 L1.5 12 L-1.5 12 L-1.5 -3 L-5 -3 Z" fill="#e9e4d6"/></g></svg><span class="tag mono" id="windTxt">0.0 m/s</span></div>
   <div id="xhair"></div>
   <div id="scope" hidden>
+    <div id="scopeShadow"></div>
     <svg class="ring" id="ringSvg" preserveAspectRatio="none"></svg>
     <div id="scopeInfo"><span id="rangeTxt">--- m</span><span id="zeroTxt">ZERO 300</span><span id="zoomTxt">x6</span></div>
     <div id="breath"><i></i></div>
@@ -199,6 +201,6 @@
   window.addEventListener('error', function (e) { var l = document.getElementById('loading'); if (l && !window.__rlReady) l.textContent = 'ERROR: ' + (e.message || '') })
   setTimeout(function () { if (!window.__rlReady) { var l = document.getElementById('loading'); if (l) l.textContent = '起動できませんでした（' + navigator.userAgent.slice(0, 60) + '）' } }, 15000)
 </script>
-<script type="module" src="./src/main.js?v=202610081030"></script>
+<script type="module" src="./src/main.js?v=202610081056"></script>
 </body>
 </html>
