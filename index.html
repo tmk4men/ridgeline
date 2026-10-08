@@ -107,6 +107,7 @@
   #tStance{right:calc(116px + env(safe-area-inset-right));bottom:calc(110px + env(safe-area-inset-bottom));width:52px;height:52px}
   #tProne{right:calc(116px + env(safe-area-inset-right));bottom:calc(172px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
   #tStance{font-size:10px;letter-spacing:-.04em}
+  #tJump{right:calc(116px + env(safe-area-inset-right));bottom:calc(234px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
   #tReload{right:calc(186px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:46px;height:46px}
   #tZoomUp,#tZoomDn{width:48px;height:48px;font-size:10px;right:calc(200px + env(safe-area-inset-right))}
   #tZoomUp{bottom:calc(200px + env(safe-area-inset-bottom))} #tZoomDn{bottom:calc(152px + env(safe-area-inset-bottom))}
@@ -150,7 +151,7 @@
     <div id="rounds"></div>
     <div id="bolt"></div>
   </div>
-  <div id="hint">右クリック 構える ・ <kbd>Shift</kbd> 息を止める ・ <kbd>Q</kbd><kbd>E</kbd> ゼロイン ・ <kbd>C</kbd> しゃがむ ・ <kbd>Z</kbd> 伏せる ・ <kbd>R</kbd> 装填</div>
+  <div id="hint">右クリック 構える ・ <kbd>Shift</kbd> 息を止める ・ <kbd>Q</kbd><kbd>E</kbd> ゼロイン ・ <kbd>C</kbd> しゃがむ ・ <kbd>Z</kbd> 伏せる ・ <kbd>Space</kbd> 跳ぶ ・ <kbd>R</kbd> 装填</div>
 </div>
 <div id="glare"></div>
 <div id="touch" hidden>
@@ -161,6 +162,7 @@
   <button class="tb" id="tStance" aria-label="しゃがむ">しゃがむ</button>
   <button class="tb" id="tProne" aria-label="伏せる">伏せる</button>
   <button class="tb" id="tReload" aria-label="装填">装填</button>
+  <button class="tb" id="tJump" aria-label="ジャンプ">跳ぶ</button>
   <button class="tb" id="tZoomUp" aria-label="ゼロインを遠く">ゼロ＋</button>
   <button class="tb" id="tZoomDn" aria-label="ゼロインを近く">ゼロ－</button>
 </div>
@@ -173,7 +175,7 @@
     <div class="row"><span class="lbl">ステージ</span><button class="opt sopt" data-s="valley">谷</button><button class="opt sopt" data-s="city">市街地</button></div>
     <div class="row"><span class="lbl">難しさ</span><button class="opt" data-d="0.75">やさしい</button><button class="opt" data-d="1">ふつう</button><button class="opt" data-d="1.3">むずかしい</button></div>
     <button class="go" id="startBtn">DEPLOY</button>
-    <p class="keys" id="keys"><kbd>WASD</kbd>移動　<kbd>マウス</kbd>視点　<kbd>右クリック</kbd>構える（ホイールで倍率）　<kbd>左クリック</kbd>撃つ<br><kbd>Shift</kbd>息を止める（構え中）／走る　<kbd>Q</kbd><kbd>E</kbd>ゼロイン　<kbd>C</kbd>しゃがむ　<kbd>Z</kbd>伏せる　<kbd>R</kbd>装填</p>
+    <p class="keys" id="keys"><kbd>WASD</kbd>移動　<kbd>マウス</kbd>視点　<kbd>右クリック</kbd>構える（ホイールで倍率）　<kbd>左クリック</kbd>撃つ<br><kbd>Shift</kbd>息を止める（構え中）／走る　<kbd>Q</kbd><kbd>E</kbd>ゼロイン　<kbd>C</kbd>しゃがむ　<kbd>Z</kbd>伏せる　<kbd>Space</kbd>跳ぶ　<kbd>R</kbd>装填</p>
   </div>
 </div>
 <div class="screen result" id="result" hidden>
@@ -201,6 +203,6 @@
   window.addEventListener('error', function (e) { var l = document.getElementById('loading'); if (l && !window.__rlReady) l.textContent = 'ERROR: ' + (e.message || '') })
   setTimeout(function () { if (!window.__rlReady) { var l = document.getElementById('loading'); if (l) l.textContent = '起動できませんでした（' + navigator.userAgent.slice(0, 60) + '）' } }, 15000)
 </script>
-<script type="module" src="./src/main.js?v=202610081056"></script>
+<script type="module" src="./src/main.js?v=202610081101"></script>
 </body>
 </html>

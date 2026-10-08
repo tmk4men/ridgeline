@@ -197,5 +197,32 @@ const fresh = seed => { const st = S.createState(seed); calm(st); st.units.slice
   }
   ok(!res[false] && res[true], '歩く敵は進む先を狙わないと当たらない（偏差）', `真ん中=${res[false]} 偏差=${res[true]}`)
 }
+{ // ジャンプ: 立ちなら約0.5m跳んで戻る。伏せ・しゃがみからは立つだけ。空中は大きく揺れ、向きを変えにくい
+  const st = S.createState(5, { noZone: true }); calm(st); const me = st.units[0]; st.units.slice(1).forEach(freeze) // 敵0人だと試合が終わって動かない
+  for (let i = 0; i < 30; i++) S.step(st, {})
+  const y0 = me.y; let top = 0, frames = 0, sway = 0
+  S.step(st, { jump: true }); S.drainEvents(st)
+  for (let i = 0; i < 120; i++) { S.step(st, { mx: 1 }); top = Math.max(top, me.y - S.heightAt(me.x, me.z)); if (me.air) { frames++; sway = Math.max(sway, Math.abs(me.swayX)) } }
+  ok(top > 0.45 && top < 0.7 && frames > 25 && frames < 50, '立ってスペースで約0.5m跳び、地面に戻る', `高さ${top.toFixed(2)}m 空中${frames}フレーム`)
+  ok(Math.abs(me.y - S.heightAt(me.x, me.z)) < 0.06, '着地したら地面に立つ', (me.y - S.heightAt(me.x, me.z)).toFixed(3))
+  me.stance = 'prone'; for (let i = 0; i < 30; i++) S.step(st, {}); const yb = me.y
+  S.step(st, { jump: true }); S.step(st, {})
+  ok(me.stance === 'stand' && me.y - yb < 0.01, '伏せからスペースは立ち上がるだけ', me.stance)
+  // 空中では横への入力がほとんど効かない
+  for (let i = 0; i < 60; i++) S.step(st, {}); me.vx = me.vz = 0
+  S.step(st, { jump: true }); for (let i = 0; i < 10; i++) S.step(st, { mx: 1 })
+  ok(Math.hypot(me.vx, me.vz) < 1.2, '空中では動き出しにくい', Math.hypot(me.vx, me.vz).toFixed(2) + ' m/s')
+  ok(sway > S.SWAY.stand * 2, '跳んでいる間は狙いが大きくぶれる', (sway * 1000).toFixed(1) + ' mrad')
+  // 地面にいないと2段目は跳べない
+  for (let i = 0; i < 60; i++) S.step(st, {}); S.step(st, { jump: true }); for (let i = 0; i < 8; i++) S.step(st, {}); const vy1 = me.vy; S.step(st, { jump: true })
+  ok(me.vy < vy1, '空中でもう一度押しても跳ばない', `${vy1.toFixed(2)} → ${me.vy.toFixed(2)}`)
+}
+{ // 落下: 低い段差は平気、高い屋上から飛び降りると痛い
+  S.setStage('city'); const st = S.createState(3, { stage: 'city', noZone: true }); const me = st.units[0]; st.units.slice(1).forEach(freeze)
+  me.hp = 100; me.y += 2.5; me.vy = 0; for (let i = 0; i < 90; i++) S.step(st, {}); const low = 100 - me.hp
+  me.hp = 100; me.y += 15; me.vy = 0; for (let i = 0; i < 200; i++) S.step(st, {}); const high = 100 - me.hp
+  ok(low === 0 && high > 30, '2.5m の段差は無傷、15m から落ちると大けが', `2.5m=${low.toFixed(0)} 15m=${high.toFixed(0)}`)
+  S.setStage('valley')
+}
 console.log(`\n${pass} OK / ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

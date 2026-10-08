@@ -1,9 +1,9 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import * as S from './sim.js?v=202610081056'
-import { buildRifle, animateBolt } from './rifle.js?v=202610081056'
-import { createGrass } from './grass.js?v=202610081056'
+import * as S from './sim.js?v=202610081101'
+import { buildRifle, animateBolt } from './rifle.js?v=202610081101'
+import { createGrass } from './grass.js?v=202610081101'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -408,8 +408,9 @@ addEventListener('keydown', e => {
   if (mode !== 'play') { if (e.code === 'Enter' && mode !== 'loading') start(); return }
   if (e.code === 'KeyC') pressed.stance = state.units[0].stance === 'crouch' ? 'stand' : 'crouch'
   if (e.code === 'KeyZ') pressed.stance = state.units[0].stance === 'prone' ? 'crouch' : 'prone'
-  if (e.code === 'KeyQ') pressed.zero = -1
-  if (e.code === 'KeyE') pressed.zero = 1
+  if (e.code === 'Space') { pressed.jump = true; if (scoped && state.units[0].stance === 'stand') setScope(false) } // 跳ぶと構えが解ける
+  if (e.code === 'KeyQ' || e.code === 'PageDown') pressed.zero = -1
+  if (e.code === 'KeyE' || e.code === 'PageUp') pressed.zero = 1
   if (e.code === 'KeyR') pressed.reload = true
   if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && scoped) SFX.breathIn()
 })
@@ -453,6 +454,7 @@ if (isTouch) {
   btn('tStance', () => { pressed.stance = state.units[0].stance === 'crouch' ? 'stand' : 'crouch' })
   btn('tProne', () => { pressed.stance = state.units[0].stance === 'prone' ? 'crouch' : 'prone' })
   btn('tReload', () => { pressed.reload = true })
+  btn('tJump', () => { pressed.jump = true; if (scoped && state.units[0].stance === 'stand') setScope(false) })
   btn('tZoomUp', () => { pressed.zero = 1 }); btn('tZoomDn', () => { pressed.zero = -1 })
 }
 function readInput() {
@@ -648,7 +650,8 @@ function handleEvents(evs) {
         }
         break
       case 'kill':
-        if (e.by < 0 && e.id !== 0) feed(`${state.units[e.id].name} が安全地帯の外で倒れた`)
+        if (e.by < 0 && e.id !== 0 && e.part !== 'fall') feed(`${state.units[e.id].name} が安全地帯の外で倒れた`)
+        if (e.id === 0 && e.part === 'fall') { feed('<b>高い所から落ちた</b>', true); break }
         if (e.by === 0) { SFX.kill(); feed(`${e.part === 'head' ? 'ヘッドショット' : '命中'}　<b>${Math.round(e.dist)} m</b>　${state.units[e.id].name} を倒した`) }
         if (e.id === 0 && e.by < 0) feed('<b>安全地帯の外で倒れた</b>', true)
         if (e.id === 0 && e.by >= 0) {
@@ -662,6 +665,8 @@ function handleEvents(evs) {
       case 'reload': SFX.round(0.15); break
       case 'round': SFX.round(); break
       case 'dry': SFX.dry(); break
+      case 'jump': if (e.id === 0) SFX.step(0.5, 0, 0); break
+      case 'land': if (e.id === 0) { SFX.step(Math.min(1.2, 0.5 + e.v / 6), 0, 0); kick = Math.max(kick, Math.min(1, e.v / 8)); if (e.v > 9) { SFX.hurt(); $('dmg').classList.add('on'); setTimeout(() => $('dmg').classList.remove('on'), 160) } } break
       case 'over': setTimeout(showResult, e.result === 'lose' ? 4200 : 2600); if (scoped && e.result === 'win') setScope(false); break
     }
   }
@@ -819,7 +824,7 @@ window.rl = {
   pause(v = true) { paused = v },
   look(y, p) { yaw = y; pitch = p },
   scope(v) { setScope(v) },
-  run(n, input = {}) { for (let i = 0; i < n; i++) { Object.assign(pressed, i === 0 ? input : {}); const keep = { ...input }; delete keep.fire; delete keep.stance; delete keep.zero; delete keep.reload; const inp = { ...readInput(), ...keep, ...pressed }; for (const k in pressed) delete pressed[k]; S.step(state, inp); handleEvents(S.drainEvents(state)) } updateViews(1 / 60); applyCamera(1 / 60); render(); drawHud(state) },
+  run(n, input = {}) { for (let i = 0; i < n; i++) { Object.assign(pressed, i === 0 ? input : {}); const keep = { ...input }; delete keep.fire; delete keep.jump; delete keep.stance; delete keep.zero; delete keep.reload; const inp = { ...readInput(), ...keep, ...pressed }; for (const k in pressed) delete pressed[k]; S.step(state, inp); handleEvents(S.drainEvents(state)) } updateViews(1 / 60); applyCamera(1 / 60); render(); drawHud(state) },
   // 敵の胴へ弾道どおりに狙う向きを返す（風は無視）。テスト用
   aimAt(id) { const me = state.units[0], e = state.units[id], eye = S.eyeOf(me), p = S.bodyPoints(e).b; const dx = p[0] - eye.x, dy = p[1] - 0.25 - eye.y, dz = p[2] - eye.z, hd = Math.hypot(dx, dz); yaw = Math.atan2(dx, dz); pitch = Math.atan2(dy, hd); return hd },
   coverage() { if (state && mode !== "title") { updateViews(0); applyCamera(0) } render(); const c = document.createElement('canvas'); c.width = 64; c.height = 40; const x = c.getContext('2d'); x.drawImage(renderer.domElement, 0, 0, 64, 40); const d = x.getImageData(0, 0, 64, 40).data; let s = 0, s2 = 0; for (let i = 0; i < d.length; i += 4) { const v = (d[i] + d[i + 1] + d[i + 2]) / 3; s += v; s2 += v * v } const n = d.length / 4, m = s / n; return { mean: +m.toFixed(1), std: +Math.sqrt(s2 / n - m * m).toFixed(1) } },

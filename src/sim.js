@@ -4,6 +4,7 @@
 export const STEP = 1 / 60
 export const HALF = 800              // 戦える範囲は 1.6km 四方
 export const G = 9.81
+export const JUMP_V = 3.3              // 跳ぶ速さ（約0.55m の高さ。主要FPSの小さな跳び上がりと同じくらい）
 export const MUZZLE_V = 820          // 銃口初速 m/s
 export const DRAG = 0.12             // 空気抵抗（速度に比例。1秒で約1割落ちる）
 export const SOUND_V = 343           // 音速
@@ -391,6 +392,12 @@ function stepPlayer(st, u, input) {
   const dt = STEP
   if (!u.alive) return
   if (input.stance && input.stance !== u.stance) { u.stance = input.stance; u.moved = Math.max(u.moved, 0.6) }
+  // ジャンプ: 地面にいるときだけ。しゃがみ・伏せからは立ち上がるだけ（他のFPSと同じ）
+  const g0j = supportAt(u.x, u.z, u.y), grounded = u.y <= g0j + 0.05 && !(u.vy > 0)
+  if (input.jump && grounded) {
+    if (u.stance !== 'stand') { u.stance = 'stand'; u.moved = Math.max(u.moved, 0.6) }
+    else { u.vy = JUMP_V; u.y = g0j + 0.06; u.moved = 1; st.events.push({ type: 'jump', id: u.id }) }
+  }
   if (input.zero) u.zero = Math.max(ZERO_MIN, Math.min(ZERO_MAX, u.zero + input.zero * ZERO_STEP))
   if (input.yaw !== undefined) u.yaw = input.yaw
   if (input.pitch !== undefined) u.pitch = Math.max(-1.2, Math.min(1.2, input.pitch))
@@ -401,13 +408,15 @@ function stepPlayer(st, u, input) {
   const m = Math.hypot(mx, mz); if (m > 1) { mx /= m; mz /= m }
   const fx = Math.sin(u.yaw), fz = Math.cos(u.yaw), rx = -fz, rz = fx
   const wx = (fx * -mz + rx * mx) * sp, wz = (fz * -mz + rz * mx) * sp
-  u.vx += (wx - u.vx) * Math.min(1, dt * 10); u.vz += (wz - u.vz) * Math.min(1, dt * 10)
+  const air = u.y > g0j + 0.05 || u.vy > 0, acc = air ? 1.2 : 10 // 空中ではほとんど向きを変えられない
+  u.vx += (wx - u.vx) * Math.min(1, dt * acc); u.vz += (wz - u.vz) * Math.min(1, dt * acc)
   const nx = Math.max(-HALF, Math.min(HALF, u.x + u.vx * dt)), nz = Math.max(-HALF, Math.min(HALF, u.z + u.vz * dt))
   const g0 = supportAt(u.x, u.z, u.y), g1 = supportAt(nx, nz, u.y), runLen = Math.hypot(nx - u.x, nz - u.z)
   if (!(runLen > 0 && (g1 - g0) / runLen > 1.1) && !inHut(nx, u.y + 0.7, nz) && !inHut(nx, u.y + 1.4, nz)) { u.x = nx; u.z = nz }
   // 足場: 段差を下りるときは落ちる（屋上から飛び降りられる）
   const g = supportAt(u.x, u.z, u.y)
-  if (u.y > g + 0.05) { u.vy = (u.vy || 0) - G * dt; u.y = Math.max(g, u.y + u.vy * dt) } else { u.y = g; u.vy = 0 }
+  if (u.y > g + 0.05 || u.vy > 0) { u.vy = (u.vy || 0) - G * dt; u.y = Math.max(g, u.y + u.vy * dt); if (u.y <= g) { if (u.vy < -2) { u.moved = Math.max(u.moved, Math.min(1, -u.vy / 5)); st.events.push({ type: 'land', id: u.id, v: -u.vy }); if (-u.vy > 9) { u.hp -= (-u.vy - 9) * 9; if (u.hp <= 0) { u.alive = false; st.events.push({ type: 'kill', id: u.id, by: -1, part: 'fall', dist: 0 }) } } } u.vy = 0 } } else { u.y = g; u.vy = 0 }
+  u.air = u.y > g + 0.05
   const speed = Math.hypot(u.vx, u.vz)
   u.moved = Math.max(0, Math.max(u.moved - dt * 0.8, speed / SPEED.sprint))
   // 息: スコープ中に押している間止める。尽きたら苦しくて大きく揺れる。離すと戻る
