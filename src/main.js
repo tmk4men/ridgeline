@@ -1,9 +1,9 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import * as S from './sim.js?v=202610090115'
-import { buildRifle, animateBolt } from './rifle.js?v=202610090115'
-import { createGrass } from './grass.js?v=202610090115'
+import * as S from './sim.js?v=202610090241'
+import { buildRifle, animateBolt } from './rifle.js?v=202610090241'
+import { createGrass } from './grass.js?v=202610090241'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -23,6 +23,9 @@ const HAZE = new THREE.Color('#b9c4c6')
 scene.fog = new THREE.FogExp2(HAZE, 0.0011) // 遠い尾根ほど霞む（空気遠近）
 const BASE_FOV = 70
 const camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.08, 4000)
+// 視野角は画面の短い辺に対して決める。縦持ちでも横の見える幅とスコープの倍率が横持ちと同じになる（縦は広がりすぎないよう 100° まで）
+let viewFov = BASE_FOV
+function applyFov() { const a = camera.aspect; camera.fov = a >= 1 ? viewFov : Math.min(100, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(viewFov / 2)) / a))); camera.updateProjectionMatrix() }
 scene.add(camera)
 
 // 空: 地平は霞の色、上は淡い青、太陽のまわりが明るい
@@ -496,7 +499,7 @@ canvas.addEventListener('wheel', e => { if (mode === 'play' && scoped) { e.preve
 document.addEventListener('pointerlockchange', () => { pointerLocked = document.pointerLockElement === canvas })
 addEventListener('mousemove', e => {
   if (mode !== 'play' || !pointerLocked) return
-  const k = 0.0022 * (camera.fov / BASE_FOV) // 倍率が高いほどゆっくり回る
+  const k = 0.0022 * (viewFov / BASE_FOV) // 倍率が高いほどゆっくり回る
   yaw -= e.movementX * k; pitch = Math.max(-1.2, Math.min(1.2, pitch - e.movementY * k))
 })
 function setScope(v) { if (v && state && state.units[0].ladder != null) return; scoped = v; $('scope').hidden = !v; $('xhair').hidden = v; viewRifle.visible = !v; if (v) zoomI = zoomI || 0 }
@@ -504,14 +507,14 @@ function setScope(v) { if (v && state && state.units[0].ladder != null) return; 
 const stick = { x: 0, y: 0, id: null }, look = { id: null, x: 0, y: 0 }
 let touchHold = false
 if (isTouch) {
-  const el = $('stick'), knob = $('knob'), R = 52
-  const set = e => { const r = el.getBoundingClientRect(); let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const d = Math.hypot(dx, dy); if (d > R) { dx *= R / d; dy *= R / d } knob.style.transform = `translate(${dx}px,${dy}px)`; stick.x = dx / R; stick.y = dy / R }
-  el.addEventListener('pointerdown', e => { stick.id = e.pointerId; el.setPointerCapture(e.pointerId); set(e); ensureAudio() })
+  const el = $('stick'), knob = $('knob')
+  const set = e => { const r = el.getBoundingClientRect(), R = r.width * 0.4; let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const d = Math.hypot(dx, dy); if (d > R) { dx *= R / d; dy *= R / d } knob.style.transform = `translate(${dx}px,${dy}px)`; stick.x = dx / R; stick.y = dy / R }
+  el.addEventListener('pointerdown', e => { stick.id = e.pointerId; try { el.setPointerCapture(e.pointerId) } catch {} set(e); ensureAudio() })
   el.addEventListener('pointermove', e => { if (e.pointerId === stick.id) set(e) })
   const end = e => { if (e.pointerId !== stick.id) return; stick.id = null; stick.x = stick.y = 0; knob.style.transform = '' }
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end)
   canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' || look.id !== null) return; look.id = e.pointerId; look.x = e.clientX; look.y = e.clientY; ensureAudio() })
-  canvas.addEventListener('pointermove', e => { if (e.pointerId !== look.id) return; const k = 0.0045 * (camera.fov / BASE_FOV); yaw -= (e.clientX - look.x) * k; pitch = Math.max(-1.2, Math.min(1.2, pitch - (e.clientY - look.y) * k)); look.x = e.clientX; look.y = e.clientY })
+  canvas.addEventListener('pointermove', e => { if (e.pointerId !== look.id) return; const k = 0.0045 * (viewFov / BASE_FOV); yaw -= (e.clientX - look.x) * k; pitch = Math.max(-1.2, Math.min(1.2, pitch - (e.clientY - look.y) * k)); look.x = e.clientX; look.y = e.clientY })
   const endLook = e => { if (e.pointerId === look.id) look.id = null }
   canvas.addEventListener('pointerup', endLook); canvas.addEventListener('pointercancel', endLook)
   const btn = (id, down, up) => { const b = $(id); b.addEventListener('pointerdown', e => { e.preventDefault(); ensureAudio(); down(); b.classList.add('on') }); const u = () => { b.classList.remove('on'); up && up() }; b.addEventListener('pointerup', u); b.addEventListener('pointercancel', u); b.addEventListener('pointerleave', u) }
@@ -656,7 +659,7 @@ function start() {
   yaw = 0; pitch = -0.05; setScope(false); zoomI = 0; viewRifle.visible = true; killcam = null
   mode = 'play'
   $('title').hidden = true; $('result').hidden = true; $('hud').hidden = false; $('touch').hidden = !isTouch
-  updateRotate()
+  if (isTouch && innerHeight > innerWidth) setTimeout(() => { if (mode === 'play') feed('横持ちにすると広く見える') }, 3400)
   hud = {}
   drawRing()
   if (isTouch) { try { const el = document.documentElement; const p = (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el); if (p && p.then) p.then(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch(() => {}) } catch {} }
@@ -676,9 +679,6 @@ function showResult() {
 }
 $('startBtn').addEventListener('click', start)
 $('againBtn').addEventListener('click', start)
-const portraitQ = matchMedia('(orientation: portrait)')
-function updateRotate() { $('rotate').hidden = !(isTouch && portraitQ.matches && mode === 'play') }
-portraitQ.addEventListener?.('change', updateRotate)
 
 function handleEvents(evs) {
   const me = state.units[0]
@@ -850,7 +850,7 @@ function applyCamera(dt) {
   kick = Math.max(0, kick - dt * 5)
   if (killcam) { killcam.t += dt; if (killcam.t > 0.6) { yaw += ((killcam.yaw - yaw + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 3); pitch += (killcam.pitch - pitch) * Math.min(1, dt * 3); if (killcam.t > 1.1 && !scoped) { setScope(true); zoomI = 0 } } }
   const want = scoped ? BASE_FOV / ZOOMS[zoomI] : BASE_FOV
-  if (Math.abs(camera.fov - want) > 0.01) { camera.fov += (want - camera.fov) * Math.min(1, dt * 18); camera.updateProjectionMatrix(); if (scoped) drawRing() }
+  if (Math.abs(viewFov - want) > 0.01) { viewFov += (want - viewFov) * Math.min(1, dt * 18); applyFov(); if (scoped) drawRing() }
   // 手元の銃: 撃ったあとのボルト操作、装填中は開いて傾ける、走ると銃口を下げる、止まっていても呼吸でわずかに揺れる
   const open = me.reloadT > 0, be = me.boltT > 0 ? S.BOLT_T - me.boltT : 99, cyc = animateBolt(rifle, be, open)
   // 薬莢: ボルトを引き切ったところで右へ飛び出す
@@ -868,7 +868,14 @@ function applyCamera(dt) {
   sky.position.copy(camera.position)
 }
 function render() { renderer.render(scene, camera) }
-function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (scoped) drawRing() }
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; applyFov(); layoutTouch(); if (scoped) drawRing() }
+// スマホのボタンの大きさ: 横持ちは上の表示（風・ゼロイン）に届かない高さ、縦持ちはスティックとボタンが横に並ぶ幅に収める
+function layoutTouch() {
+  const W = innerWidth, H = innerHeight, portrait = H > W
+  const k = portrait ? Math.min(1.1, W / 414) : Math.min(1.15, (H - 66) / 290, W / 640)
+  document.documentElement.style.setProperty('--k', Math.max(0.62, k).toFixed(3))
+  document.body.classList.toggle('portrait', portrait)
+}
 addEventListener('resize', resize)
 resize()
 
@@ -880,7 +887,7 @@ function frame(now) {
     // タイトル: 谷をゆっくり見渡す
     titleT += dt
     viewRifle.visible = false // タイトルでは自分の銃を写さない
-    camera.fov = BASE_FOV; camera.updateProjectionMatrix()
+    viewFov = BASE_FOV; applyFov()
     const a = titleT * 0.03, x = Math.sin(a) * 320, z = -420 + Math.cos(a) * 120
     camera.position.set(x, S.heightAt(x, z) + (S.STAGE === 'city' ? 70 : 24), z); camera.lookAt(0, S.STAGE === 'city' ? 30 : 40, 150)
     sun.target.position.set(x, 0, z); sun.position.set(x + SUN.x * 200, SUN.y * 200, z + SUN.z * 200); sky.position.copy(camera.position)

@@ -94,31 +94,46 @@
   .result h2{margin:0;font-family:var(--mono);font-size:56px;letter-spacing:.1em}
   .result h2.lose{color:var(--red)}
   #loading{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);letter-spacing:.3em;color:var(--dim)}
-  #rotate{position:fixed;inset:0;z-index:50;display:grid;place-content:center;gap:10px;background:#0d1210;text-align:center;font-weight:700}
 
   /* ---------- スマホ ---------- */
   #touch{position:absolute;inset:0;pointer-events:none}
-  #stick{position:absolute;left:calc(28px + env(safe-area-inset-left));bottom:calc(28px + env(safe-area-inset-bottom));width:130px;height:130px;border-radius:50%;border:1.5px solid rgba(233,228,214,.35);pointer-events:auto}
-  #knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px;border-radius:50%;background:rgba(233,228,214,.75)}
-  .tb{position:absolute;border-radius:50%;border:1.5px solid rgba(233,228,214,.45);background:rgba(13,18,16,.45);color:var(--paper);font-family:var(--sans);font-size:12px;font-weight:900;pointer-events:auto;display:grid;place-items:center}
+  /* 位置と大きさは --k 倍（画面の大きさから main.js が決める） */
+  :root{--k:1}
+  #stick{position:absolute;left:calc(28px * var(--k) + env(safe-area-inset-left));bottom:calc(28px * var(--k) + env(safe-area-inset-bottom));width:calc(130px * var(--k));height:calc(130px * var(--k));border-radius:50%;border:1.5px solid rgba(233,228,214,.35);pointer-events:auto}
+  #knob{position:absolute;left:50%;top:50%;width:calc(52px * var(--k));height:calc(52px * var(--k));margin:calc(-26px * var(--k));border-radius:50%;background:rgba(233,228,214,.75)}
+  .tb{position:absolute;border-radius:50%;border:1.5px solid rgba(233,228,214,.45);background:rgba(13,18,16,.45);color:var(--paper);font-family:var(--sans);font-size:calc(12px * var(--k));font-weight:900;pointer-events:auto;display:grid;place-items:center;padding:0}
   .tb.on{background:var(--paper);color:var(--ink)}
-  #tFire{right:calc(28px + env(safe-area-inset-right));bottom:calc(40px + env(safe-area-inset-bottom));width:86px;height:86px;background:rgba(217,72,59,.75);border-color:transparent}
-  #tScope{right:calc(130px + env(safe-area-inset-right));bottom:calc(30px + env(safe-area-inset-bottom));width:64px;height:64px}
-  #tBreath{right:calc(40px + env(safe-area-inset-right));bottom:calc(140px + env(safe-area-inset-bottom));width:56px;height:56px}
-  #tStance{right:calc(116px + env(safe-area-inset-right));bottom:calc(110px + env(safe-area-inset-bottom));width:52px;height:52px}
-  #tProne{right:calc(116px + env(safe-area-inset-right));bottom:calc(172px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
-  #tStance{font-size:10px;letter-spacing:-.04em}
-  #tJump{right:calc(116px + env(safe-area-inset-right));bottom:calc(234px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:11px}
-  #tReload{right:calc(186px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));width:46px;height:46px}
-  #tZoomUp,#tZoomDn{width:48px;height:48px;font-size:10px;right:calc(200px + env(safe-area-inset-right))}
-  #tZoomUp{bottom:calc(200px + env(safe-area-inset-bottom))} #tZoomDn{bottom:calc(152px + env(safe-area-inset-bottom))}
+  #tFire{right:calc(28px * var(--k) + env(safe-area-inset-right));bottom:calc(40px * var(--k) + env(safe-area-inset-bottom));width:calc(86px * var(--k));height:calc(86px * var(--k));background:rgba(217,72,59,.75);border-color:transparent;font-size:calc(14px * var(--k))}
+  #tScope{right:calc(130px * var(--k) + env(safe-area-inset-right));bottom:calc(30px * var(--k) + env(safe-area-inset-bottom));width:calc(64px * var(--k));height:calc(64px * var(--k))}
+  #tBreath{right:calc(40px * var(--k) + env(safe-area-inset-right));bottom:calc(140px * var(--k) + env(safe-area-inset-bottom));width:calc(56px * var(--k));height:calc(56px * var(--k))}
+  #tStance{right:calc(116px * var(--k) + env(safe-area-inset-right));bottom:calc(110px * var(--k) + env(safe-area-inset-bottom));width:calc(52px * var(--k));height:calc(52px * var(--k));font-size:calc(10px * var(--k));letter-spacing:-.04em}
+  #tProne{right:calc(116px * var(--k) + env(safe-area-inset-right));bottom:calc(172px * var(--k) + env(safe-area-inset-bottom));width:calc(52px * var(--k));height:calc(52px * var(--k));font-size:calc(11px * var(--k))}
+  #tJump{right:calc(116px * var(--k) + env(safe-area-inset-right));bottom:calc(234px * var(--k) + env(safe-area-inset-bottom));width:calc(52px * var(--k));height:calc(52px * var(--k));font-size:calc(11px * var(--k))}
+  #tReload{right:calc(186px * var(--k) + env(safe-area-inset-right));bottom:calc(96px * var(--k) + env(safe-area-inset-bottom));width:calc(46px * var(--k));height:calc(46px * var(--k))}
+  #tZoomUp,#tZoomDn{width:calc(48px * var(--k));height:calc(48px * var(--k));font-size:calc(10px * var(--k));right:calc(200px * var(--k) + env(safe-area-inset-right))}
+  #tZoomUp{bottom:calc(200px * var(--k) + env(safe-area-inset-bottom))} #tZoomDn{bottom:calc(152px * var(--k) + env(safe-area-inset-bottom))}
   body.touch #mini{width:104px;height:104px} body.touch #zoneInfo{top:calc(148px + env(safe-area-inset-top));width:104px;font-size:9.5px}
-  body.touch #left{bottom:auto;top:calc(170px + env(safe-area-inset-top));min-width:0} body.touch #hpBar{width:130px}
-  body.touch #right{bottom:auto;top:calc(96px + env(safe-area-inset-top));gap:4px} body.touch #right .val{font-size:18px}
   body.touch #hint{display:none}
+  body.touch .feed{font-size:12px;padding:3px 10px}
+  /* 体勢と体力: 横持ちは下の真ん中（スティックとボタンの間）、縦持ちは方位の下 */
+  body.touch #left{left:50%;transform:translateX(-50%);bottom:calc(8px + env(safe-area-inset-bottom));min-width:0;display:flex;align-items:center;gap:10px}
+  body.touch #hpBar{width:110px} body.touch #stance svg{width:22px;height:22px}
+  /* ゼロインと弾: 横持ちは風の左に横一列（右のボタン群とぶつけない） */
+  body.touch #right{bottom:auto;top:calc(16px + env(safe-area-inset-top));right:calc(80px + env(safe-area-inset-right));display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;column-gap:8px;row-gap:2px;width:170px}
+  body.touch #right .val{font-size:18px} body.touch #bolt{flex-basis:100%;min-height:0}
+  /* 縦持ち: ゼロインのボタンはスティックの上、表示は上に寄せる */
+  body.touch.portrait #left{bottom:auto;top:calc(172px + env(safe-area-inset-top));left:calc(18px + env(safe-area-inset-left));transform:none;display:grid;gap:6px}
+  /* 横持ちの方位は、左の敵数と右のゼロイン表示の間に収める */
+  body.touch:not(.portrait) #compass{width:clamp(130px,calc(100vw - 440px),520px)}
+  body.touch.portrait #right{top:calc(96px + env(safe-area-inset-top));right:calc(18px + env(safe-area-inset-right));display:grid;justify-items:end;gap:4px;width:auto}
+  body.touch.portrait #tZoomUp,body.touch.portrait #tZoomDn{right:auto;bottom:calc(176px * var(--k) + env(safe-area-inset-bottom))}
+  body.touch.portrait #tZoomDn{left:calc(30px * var(--k) + env(safe-area-inset-left))} body.touch.portrait #tZoomUp{left:calc(90px * var(--k) + env(safe-area-inset-left))}
+  body.touch.portrait #feed{top:30%}
+  body.touch.portrait #scopeInfo{bottom:calc(50% + 46vw + 14px)} body.touch.portrait #breath{bottom:calc(50% + 46vw + 6px)}
   /* 高さの低い画面（スマホ横）: 1画面に収める */
   @media (max-height:520px){ .screen{padding:12px 24px;overflow:auto} .panel{gap:10px} h1{font-size:40px} h1 small{margin-top:4px;font-size:11px} .brief{font-size:12px;line-height:1.6} .go{min-height:46px;font-size:18px} .opt{min-height:36px} .keys{display:none} .result h2{font-size:36px} .stats div{padding:8px 12px} .stats b{font-size:20px} }
   body.touch .keys{display:none}
+  @media (max-width:420px){ .row .lbl{width:100%} .opt{padding:0 14px} }
   @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
@@ -193,7 +208,6 @@
     <button class="go" id="againBtn">AGAIN</button>
   </div>
 </div>
-<div id="rotate" hidden><span>スマホを横にして遊ぶ</span></div>
 
 <svg width="0" height="0" style="position:absolute">
   <symbol id="s-stand" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="4.5" r="2"/><path d="M12 7v7M12 14l-3 7M12 14l3 7M8 10h8"/></g></symbol>
@@ -205,6 +219,6 @@
   window.addEventListener('error', function (e) { var l = document.getElementById('loading'); if (l && !window.__rlReady) l.textContent = 'ERROR: ' + (e.message || '') })
   setTimeout(function () { if (!window.__rlReady) { var l = document.getElementById('loading'); if (l) l.textContent = '起動できませんでした（' + navigator.userAgent.slice(0, 60) + '）' } }, 15000)
 </script>
-<script type="module" src="./src/main.js?v=202610090115"></script>
+<script type="module" src="./src/main.js?v=202610090241"></script>
 </body>
 </html>
