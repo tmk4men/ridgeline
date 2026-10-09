@@ -4,6 +4,7 @@
 export const STEP = 1 / 60
 export const HALF = 800              // 戦える範囲は 1.6km 四方
 export const G = 9.81
+export const LADDER = { up: 3.0, down: 4.0, reach: 0.9 } // はしご: 登る・降りる速さ（m/s）、取り付ける距離
 export const JUMP_V = 3.3              // 跳ぶ速さ（約0.55m の高さ。主要FPSの小さな跳び上がりと同じくらい）
 export const MUZZLE_V = 820          // 銃口初速 m/s
 export const DRAG = 0.12             // 空気抵抗（速度に比例。1秒で約1割落ちる）
@@ -113,15 +114,21 @@ function buildCity() {
     boxes.push({ x: b.x, z: b.z + b.d / 2 - t / 2, w: b.w, d: t, y: top, h: ph, wall: true }, { x: b.x, z: b.z - b.d / 2 + t / 2, w: b.w, d: t, y: top, h: ph, wall: true },
       { x: b.x + b.w / 2 - t / 2, z: b.z, w: t, d: b.d, y: top, h: ph, wall: true }, { x: b.x - b.w / 2 + t / 2, z: b.z, w: t, d: b.d, y: top, h: ph, wall: true })
   }
+  // はしご: 建物ごとに1本、道路に面した長い壁（±z 側）の外に付ける。地面から屋上の縁まで
+  const ladders = []
+  for (const [bi, b] of buildings.entries()) {
+    const nz = r() < 0.5 ? 1 : -1, x = b.x + (r() * 2 - 1) * Math.max(0, b.w / 2 - 3), z = b.z + nz * b.d / 2
+    ladders.push({ x, z, nx: 0, nz, y0: heightAt(x, z + nz * 0.6), top: b.y + b.h, b: bi })
+  }
   for (let i = 0; i < 300; i++) { const x = (r() * 2 - 1) * 520, z = (r() * 2 - 1) * 520; if (boxes.some(b => Math.abs(x - b.x) < b.w / 2 + 2 && Math.abs(z - b.z) < b.d / 2 + 2)) continue; if (r() < 0.6) trees.push({ x, z, y: heightAt(x, z), h: 6 + r() * 4, r: 1.4 + r() * 0.8, kind: 'broad' }); else rocks.push({ x, z, y: heightAt(x, z), s: 0.8 + r() * 0.8, car: true, yaw: r() * 3 }) }
-  return finishWorld({ trees, rocks, huts, buildings, boxes })
+  return finishWorld({ trees, rocks, huts, buildings, boxes, ladders })
 }
 function finishWorld(w) {
   const CELL = 40, grid = new Map(), bgrid = new Map()
   for (const [i, t] of w.trees.entries()) { const key = Math.floor(t.x / CELL) + ',' + Math.floor(t.z / CELL); if (!grid.has(key)) grid.set(key, []); grid.get(key).push(i) }
   // 箱の格子（箱が掛かるマスすべてに入れる）
   for (const [i, b] of w.boxes.entries()) for (let gx = Math.floor((b.x - b.w / 2) / CELL); gx <= Math.floor((b.x + b.w / 2) / CELL); gx++) for (let gz = Math.floor((b.z - b.d / 2) / CELL); gz <= Math.floor((b.z + b.d / 2) / CELL); gz++) { const key = gx + ',' + gz; if (!bgrid.has(key)) bgrid.set(key, []); bgrid.get(key).push(i) }
-  return { ...w, grid, bgrid, CELL }
+  return { ladders: [], ...w, grid, bgrid, CELL }
 }
 const WORLDS = {}
 export let WORLD = null
@@ -392,6 +399,8 @@ function stepPlayer(st, u, input) {
   const dt = STEP
   if (!u.alive) return
   if (input.stance && input.stance !== u.stance) { u.stance = input.stance; u.moved = Math.max(u.moved, 0.6) }
+  if (u.ladder != null) { stepLadder(st, u, input); return }
+  if (tryLadder(st, u, input)) return
   // ジャンプ: 地面にいるときだけ。しゃがみ・伏せからは立ち上がるだけ（他のFPSと同じ）
   const g0j = supportAt(u.x, u.z, u.y), grounded = u.y <= g0j + 0.05 && !(u.vy > 0)
   if (input.jump && grounded) {
@@ -450,6 +459,47 @@ function stepPlayer(st, u, input) {
       alertEnemies(st, u)
     }
   }
+}
+// はしごに取り付く: 下からは壁に向かって前進、屋上からは縁のはしごへ外向きに前進（Battlefield・CoD と同じ）
+function tryLadder(st, u, input) {
+  if (!(input.mz < -0.3) || !WORLD.ladders.length) return false
+  const fx = Math.sin(u.yaw), fz = Math.cos(u.yaw)
+  for (const [i, L] of WORLD.ladders.entries()) {
+    if (Math.abs(L.x - u.x) > 3 || Math.abs(L.z - u.z) > 3) continue
+    const face = fx * L.nx + fz * L.nz // 外向きなら +1、壁向きなら -1
+    const bx = L.x + L.nx * 0.5, bz = L.z + L.nz * 0.5
+    if (face < -0.5 && Math.hypot(u.x - bx, u.z - bz) < LADDER.reach && u.y < L.top - 1) { attach(st, u, i, Math.max(u.y, L.y0), false); return true }
+    const ix = L.x - L.nx * 0.7, iz = L.z - L.nz * 0.7
+    if (face > 0.5 && Math.hypot(u.x - ix, u.z - iz) < 1.1 && Math.abs(u.y - L.top) < 0.4) { attach(st, u, i, L.top - 0.9, true); return true }
+  }
+  return false
+}
+function attach(st, u, i, y, fromTop) {
+  const L = WORLD.ladders[i]
+  u.ladder = i; u.ladderLock = fromTop // 上から乗ったら、前進をいったん離すまで登らない（乗った瞬間に登り返さない）
+  u.x = L.x + L.nx * 0.6; u.z = L.z + L.nz * 0.6; u.y = y; u.vx = u.vz = u.vy = 0; u.stance = 'stand'
+  st.events.push({ type: 'ladder', id: u.id, on: true, yaw: Math.atan2(-L.nx, -L.nz), fromTop })
+}
+function detach(st, u, kind) { u.ladder = null; st.events.push({ type: 'ladder', id: u.id, on: false, kind }) }
+function stepLadder(st, u, input) {
+  const dt = STEP, L = WORLD.ladders[u.ladder]
+  if (!u.alive) { detach(st, u, 'dead'); return }
+  u.stance = 'stand'
+  if (u.ladderLock && !(input.mz < -0.3)) u.ladderLock = false
+  const dir = input.mz < -0.3 && !u.ladderLock ? 1 : input.mz > 0.3 ? -1 : 0
+  const y0 = u.y
+  u.y += dir > 0 ? LADDER.up * dt : dir < 0 ? -LADDER.down * dt : 0
+  u.climb = (u.climb || 0) + Math.abs(u.y - y0)
+  if (u.climb > 0.6) { u.climb = 0; st.events.push({ type: 'rung', id: u.id }) }
+  u.moved = Math.max(u.moved - dt * 0.8, 0.8); u.vx = u.vz = 0
+  u.breath = Math.min(BREATH_MAX, u.breath + dt); u.holding = false
+  u.boltT = Math.max(0, u.boltT - dt) // 手がふさがっているので撃てない・装填しない
+  const base = SWAY.stand * 4, w = st.t * 0.9
+  u.swayX = Math.sin(w) * base; u.swayY = Math.sin(w * 2) * base * 0.6
+  if (input.jump) { detach(st, u, 'jump'); u.vx = L.nx * 2; u.vz = L.nz * 2; u.vy = 1; u.y += 0.06; return } // 手を離す
+  if (u.y >= L.top) { u.x = L.x - L.nx * 1.0; u.z = L.z - L.nz * 1.0; u.y = L.top; detach(st, u, 'top'); return } // 手すり壁を越えて屋上へ
+  const ground = Math.max(L.y0, heightAt(u.x, u.z))
+  if (u.y <= ground) { u.y = ground; u.x = L.x + L.nx * 0.9; u.z = L.z + L.nz * 0.9; detach(st, u, 'bottom') }
 }
 export function eyeOf(u) { return { x: u.x, y: u.y + EYE[u.stance], z: u.z } }
 function fire(st, u, yaw, pitch) {

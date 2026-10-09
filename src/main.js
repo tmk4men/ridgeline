@@ -1,9 +1,9 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import * as S from './sim.js?v=202610081101'
-import { buildRifle, animateBolt } from './rifle.js?v=202610081101'
-import { createGrass } from './grass.js?v=202610081101'
+import * as S from './sim.js?v=202610090103'
+import { buildRifle, animateBolt } from './rifle.js?v=202610090103'
+import { createGrass } from './grass.js?v=202610090103'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -229,6 +229,13 @@ function roofTex() {
   _roofTex = new THREE.CanvasTexture(c); _roofTex.wrapS = _roofTex.wrapT = THREE.RepeatWrapping; _roofTex.colorSpace = THREE.SRGBColorSpace; _roofTex.anisotropy = 8
   return _roofTex
 }
+function rungTex() {
+  // はしごの段1つぶん（縦に繰り返す）。段以外は透明
+  const c = document.createElement('canvas'); c.width = 32; c.height = 32
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 13, 32, 6)
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
 function buildCity() {
   const W = S.WORLD, r = S.rng(53)
   const wallMs = ['#ffffff', '#e6ebf0', '#f0e2cc', '#dcd6cc'].map(col => new THREE.MeshStandardMaterial({ map: windowTex(), color: col, roughness: 0.85 }))
@@ -267,6 +274,21 @@ function buildCity() {
   }
   for (const bx of W.boxes) { if (!bx.wall) continue; const g = new THREE.BoxGeometry(bx.w, bx.h, bx.d), pu = g.attributes.uv; for (let v = 0; v < pu.count; v++) { const f = Math.floor(v / 4), fw = f < 2 ? bx.d : bx.w; pu.setXY(v, pu.getX(v) * fw / 8, pu.getY(v) * (f === 2 || f === 3 ? bx.d : bx.h) / 8) } g.translate(bx.x, bx.y + bx.h / 2, bx.z); pars.push(g.toNonIndexed()); box(caps, bx.w + 0.08, 0.07, bx.d + 0.08, bx.x, bx.y + bx.h, bx.z) }
   const add = (list, m) => { if (!list.length) return; for (const g of list) { if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2)) } const mesh = new THREE.Mesh(mergeGeometries(list, false), m); mesh.castShadow = mesh.receiveShadow = true; wg.add(mesh) }
+  // はしご: 2本の柱（屋上の縁の上まで伸びて手すりになる）＋ 段は透かしの板1枚
+  const rails = [], rungs = []
+  for (const L of W.ladders) {
+    const h = L.top + 1.1 - L.y0, px = L.x, pz = L.z + L.nz * 0.22
+    for (const sx of [-0.24, 0.24]) { const g = new THREE.BoxGeometry(0.05, h, 0.06); g.translate(px + sx, L.y0 + h / 2, pz); rails.push(g.toNonIndexed()) }
+    const top2 = new THREE.BoxGeometry(0.53, 0.05, 0.05); top2.translate(px, L.top + 1.1, pz); rails.push(top2.toNonIndexed())
+    for (const sx of [-0.24, 0.24]) { const g = new THREE.BoxGeometry(0.05, 0.05, 0.6); g.translate(px + sx, L.top + 1.1, L.z - L.nz * 0.1); rails.push(g.toNonIndexed()) } // 屋上側へ曲がる手すり
+    const hh = L.top - L.y0, pl = new THREE.PlaneGeometry(0.46, hh), pu = pl.attributes.uv
+    for (let v = 0; v < pu.count; v++) pu.setXY(v, pu.getX(v), pu.getY(v) * hh / 0.3)
+    if (L.nz < 0) pl.rotateY(Math.PI)
+    pl.translate(px, L.y0 + hh / 2, pz); rungs.push(pl.toNonIndexed())
+  }
+  const railM = new THREE.MeshStandardMaterial({ color: '#5c5f62', metalness: 0.6, roughness: 0.5 })
+  const rungM = new THREE.MeshStandardMaterial({ map: rungTex(), color: '#6a6d70', metalness: 0.6, roughness: 0.5, alphaTest: 0.5, side: THREE.DoubleSide })
+  add(rails, railM); add(rungs, rungM)
   walls.forEach((l, i) => add(l, wallMs[i])); add(roofs, roofM); add(pars, parM); add(caps, capM); add(units, unitM); add(darks, darkM)
 }
 
@@ -391,6 +413,7 @@ const SFX = {
   breathIn: () => noise(0.5, 0.06, 800, 'bandpass', 0, 1500, 0, 0, 1, 0.02),
   breathOut: () => noise(0.7, 0.07, 1200, 'bandpass', 0, 500, 0, 0, 1, 0.02),
   kill: () => tone(520, 0.25, 'sine', 0.12, 780, 0.05),
+  rung: () => { noise(0.05, 0.25, 2600 + Math.random() * 500, 'bandpass', 0, null, 0, 0, 9, 0.1); tone(1250 + Math.random() * 150, 0.09, 'triangle', 0.05, 900) }, // はしごの金属の段を踏む音
   // 足音: 草・土は低くこもった音、市街地は硬い音。遠いほど小さく、左右に振る
   step: (vol, pan, far) => { if (state && state.stage === 'city') noise(0.06, 0.35 * vol, 1400 + Math.random() * 400, 'bandpass', 0, null, pan, far, 2, 0.1); else noise(0.09, 0.4 * vol, 500 + Math.random() * 250, 'lowpass', 0, 180, pan, far, 1, 0.08) },
 }
@@ -432,7 +455,7 @@ addEventListener('mousemove', e => {
   const k = 0.0022 * (camera.fov / BASE_FOV) // 倍率が高いほどゆっくり回る
   yaw -= e.movementX * k; pitch = Math.max(-1.2, Math.min(1.2, pitch - e.movementY * k))
 })
-function setScope(v) { scoped = v; $('scope').hidden = !v; $('xhair').hidden = v; viewRifle.visible = !v; if (v) zoomI = zoomI || 0 }
+function setScope(v) { if (v && state && state.units[0].ladder != null) return; scoped = v; $('scope').hidden = !v; $('xhair').hidden = v; viewRifle.visible = !v; if (v) zoomI = zoomI || 0 }
 // スマホ: 左スティックで移動、空いている所をなぞって視点、右下のボタン
 const stick = { x: 0, y: 0, id: null }, look = { id: null, x: 0, y: 0 }
 let touchHold = false
@@ -505,6 +528,8 @@ function drawMini(st) {
   x.translate(R, R); x.rotate(Math.PI + yaw); x.scale(sc, sc); x.translate(-me.x, -me.z) // 前が上・カメラの右が右（4方向で検算済み）
   x.fillStyle = 'rgba(200,205,195,.35)'
   for (const b of S.WORLD.buildings) x.fillRect(b.x - b.w / 2, b.z - b.d / 2, b.w, b.d)
+  x.fillStyle = 'rgba(242,179,61,.9)' // はしご
+  for (const L of S.WORLD.ladders) if (Math.abs(L.x - me.x) < range && Math.abs(L.z - me.z) < range) x.fillRect(L.x - 3 / sc, L.z + L.nz * 1 / sc - 2 / sc, 6 / sc, 4 / sc)
   x.fillStyle = 'rgba(160,140,110,.55)'
   for (const h of S.WORLD.huts) x.fillRect(h.x - h.w / 2, h.z - h.d / 2, h.w, h.d)
   // 安全地帯（今の円と、縮む先の円）
@@ -555,7 +580,10 @@ function drawHud(st) {
     $('breath').classList.toggle('low', me.breath < 1.5)
   }
   $('hint').hidden = !(st.t < 14) || scoped // 構えている間は下の数字と重なるので出さない
+  const lh = me.ladder != null ? (isTouch ? 'スティック上で登る・下で降りる　跳ぶで手を離す' : 'W 登る　S 降りる　Space 手を離す') : nearLadder(me) ? (isTouch ? 'はしごに向かって進むと登れる' : 'はしごに向かって W で登る') : ''
+  if (hud.lad !== lh) { hud.lad = lh; $('ladderHint').textContent = lh; $('ladderHint').hidden = !lh }
 }
+function nearLadder(me) { for (const L of S.WORLD.ladders) if (Math.abs(L.x - me.x) < 2.5 && Math.abs(L.z - me.z) < 2.5 && (me.y < L.top - 1 || Math.abs(me.y - L.top) < 0.4)) return true; return false }
 function feed(html, bad) { const d = document.createElement('div'); d.className = 'feed' + (bad ? ' bad' : ''); d.innerHTML = html; $('feed').prepend(d); setTimeout(() => d.remove(), 3200); while ($('feed').children.length > 3) $('feed').lastElementChild.remove() }
 
 // ================================================================ 試合の進行
@@ -666,6 +694,12 @@ function handleEvents(evs) {
       case 'round': SFX.round(); break
       case 'dry': SFX.dry(); break
       case 'jump': if (e.id === 0) SFX.step(0.5, 0, 0); break
+      case 'ladder':
+        if (e.id !== 0) break
+        if (e.on) { yaw = e.yaw; pitch = e.fromTop ? -0.55 : 0.3; if (scoped) setScope(false); SFX.rung(0) } // はしごの方を向く。上から乗ったら下を見る
+        else if (e.kind === 'top' || e.kind === 'bottom') { SFX.step(0.6, 0, 0); if (e.kind === 'top') pitch = 0 }
+        break
+      case 'rung': if (e.id === 0) SFX.rung(0); break
       case 'land': if (e.id === 0) { SFX.step(Math.min(1.2, 0.5 + e.v / 6), 0, 0); kick = Math.max(kick, Math.min(1, e.v / 8)); if (e.v > 9) { SFX.hurt(); $('dmg').classList.add('on'); setTimeout(() => $('dmg').classList.remove('on'), 160) } } break
       case 'over': setTimeout(showResult, e.result === 'lose' ? 4200 : 2600); if (scoped && e.result === 'win') setScope(false); break
     }
@@ -770,7 +804,7 @@ function applyCamera(dt) {
   if (be < 0.62) brass.out = false
   if (brass.m.visible) { brass.t += dt; brass.v.y -= 9.8 * dt * 0.6; brass.m.position.addScaledVector(brass.v, dt); brass.m.rotation.x += dt * 22; brass.m.rotation.z += dt * 9; if (brass.t > 0.7) brass.m.visible = false }
   const sp = Math.hypot(me.vx, me.vz)
-  pose.run += ((sp > 4.5 ? 1 : 0) - pose.run) * Math.min(1, dt * 7)
+  pose.run += ((sp > 4.5 || me.ladder != null ? 1 : 0) - pose.run) * Math.min(1, dt * 7) // はしごでは銃を下げる
   pose.rel += ((open ? 1 : 0) - pose.rel) * Math.min(1, dt * 6)
   const br = Math.sin(st.t * 1.3) * 0.004, run = pose.run
   viewRifle.position.set(0.15 + Math.sin(st.t * 4.5) * bob * 0.6 - run * 0.02, -0.17 + bob * 0.5 + br - kick * 0.025 - cyc * 0.015 - run * 0.05 - pose.rel * 0.03, -0.36 + kick * 0.06 + pose.rel * 0.04)
@@ -814,6 +848,7 @@ requestAnimationFrame(frame)
 
 // ================================================================ 検証用 API
 window.__rlLos = (a, b) => S.lineOfSight(a.x, a.y, a.z, b.x, b.y, b.z, 0)
+window.__rlWorld = () => S.WORLD
 window.rl = {
   get mode() { return mode },
   raw: () => state,

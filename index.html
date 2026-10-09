@@ -71,6 +71,7 @@
   #breath{position:absolute;left:50%;bottom:calc(10% + env(safe-area-inset-bottom));transform:translateX(-50%);width:160px;height:3px;background:rgba(233,228,214,.2)} #breath i{display:block;height:100%;background:var(--paper);transform-origin:left}
   #breath.low i{background:var(--red)}
   #hint{position:absolute;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:12.5px;color:var(--dim);white-space:nowrap}
+  #ladderHint{position:absolute;left:50%;top:58%;transform:translateX(-50%);font-size:13px;font-weight:700;color:var(--paper);text-shadow:0 0 6px #000;white-space:nowrap;pointer-events:none}
   #hint kbd{font-family:var(--mono);color:var(--paper);border:1px solid rgba(233,228,214,.4);padding:0 5px;margin:0 2px}
 
   /* ---------- 画面（タイトル・結果） ---------- */
@@ -151,6 +152,7 @@
     <div id="rounds"></div>
     <div id="bolt"></div>
   </div>
+  <div id="ladderHint" hidden></div>
   <div id="hint">右クリック 構える ・ <kbd>Shift</kbd> 息を止める ・ <kbd>Q</kbd><kbd>E</kbd> ゼロイン ・ <kbd>C</kbd> しゃがむ ・ <kbd>Z</kbd> 伏せる ・ <kbd>Space</kbd> 跳ぶ ・ <kbd>R</kbd> 装填</div>
 </div>
 <div id="glare"></div>
@@ -203,6 +205,6 @@
   window.addEventListener('error', function (e) { var l = document.getElementById('loading'); if (l && !window.__rlReady) l.textContent = 'ERROR: ' + (e.message || '') })
   setTimeout(function () { if (!window.__rlReady) { var l = document.getElementById('loading'); if (l) l.textContent = '起動できませんでした（' + navigator.userAgent.slice(0, 60) + '）' } }, 15000)
 </script>
-<script type="module" src="./src/main.js?v=202610081101"></script>
+<script type="module" src="./src/main.js?v=202610090103"></script>
 </body>
 </html>

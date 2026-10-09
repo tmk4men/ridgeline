@@ -224,5 +224,28 @@ const fresh = seed => { const st = S.createState(seed); calm(st); st.units.slice
   ok(low === 0 && high > 30, '2.5m の段差は無傷、15m から落ちると大けが', `2.5m=${low.toFixed(0)} 15m=${high.toFixed(0)}`)
   S.setStage('valley')
 }
+{ // はしご: 屋上スタートでも、はしごで地上に降りて、また登れる（屋上で詰まない）
+  S.setStage('city'); const st = S.createState(11, { stage: 'city', noZone: true }); const me = st.units[0]; st.units.slice(1).forEach(freeze)
+  const W = S.WORLD, onRoof = me.y > S.heightAt(me.x, me.z) + 3
+  const bi = W.buildings.findIndex(b => Math.abs(me.x - b.x) <= b.w / 2 && Math.abs(me.z - b.z) <= b.d / 2), L = W.ladders.find(l => l.b === bi)
+  ok(onRoof && !!L && W.ladders.length === W.buildings.length, '屋上スタートで、どの建物にもはしごがある', `屋上=${onRoof} はしご${W.ladders.length}/${W.buildings.length}`)
+  // 屋上の内側から、はしごの方へ外向きに歩く
+  me.x = L.x - L.nz * 0; me.z = L.z - L.nz * 3; me.y = L.top; me.vx = me.vz = 0
+  const yawOut = Math.atan2(L.nx, L.nz); let on = false
+  for (let i = 0; i < 120 && !on; i++) { S.step(st, { mz: -1, yaw: yawOut }); on = me.ladder != null }
+  ok(on, '屋上で縁のはしごへ外向きに進むと取り付く', `y=${me.y.toFixed(1)}`)
+  for (let i = 0; i < 30; i++) S.step(st, { mz: -1, yaw: yawOut }) // 押しっぱなしでも登り返さない
+  const stillTop = me.y <= L.top
+  let fired = 0; for (let i = 0; i < 60 * 30 && me.ladder != null; i++) { S.step(st, { mz: 1, fire: true }); for (const ev of S.drainEvents(st)) if (ev.type === 'shot') fired++ }
+  const g = S.heightAt(me.x, me.z)
+  ok(stillTop && me.ladder == null && Math.abs(me.y - g) < 0.1 && me.hp === 100, '後ろ入力で地上まで降りられる（無傷）', `地面との差 ${(me.y - g).toFixed(2)} hp=${me.hp}`)
+  ok(fired === 0, 'はしごの上では撃てない', `${fired}発`)
+  // 下から壁に向かって進むと登り、登り切ると屋上に立つ
+  const yawIn = Math.atan2(-L.nx, -L.nz); let t = 0
+  for (; t < 60 * 40; t++) { S.step(st, { mz: -1, yaw: yawIn }); if (me.ladder == null && me.y > L.top - 0.1) break }
+  const inside = Math.abs(me.x - W.buildings[bi].x) < W.buildings[bi].w / 2 && Math.abs(me.z - W.buildings[bi].z) < W.buildings[bi].d / 2
+  ok(inside && Math.abs(me.y - L.top) < 0.1, '下から登ると手すり壁を越えて屋上に立つ', `${(t / 60).toFixed(1)}秒 高さ${(L.top - L.y0).toFixed(0)}m`)
+  S.setStage('valley')
+}
 console.log(`\n${pass} OK / ${fail} FAIL`)
 process.exit(fail ? 1 : 0)
