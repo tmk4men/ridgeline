@@ -5,6 +5,7 @@ export const STEP = 1 / 60
 export const HALF = 800              // 戦える範囲は 1.6km 四方
 export const G = 9.81
 export const LADDER = { up: 3.0, down: 4.0, reach: 0.9 } // はしご: 登る・降りる速さ（m/s）、取り付ける距離
+export const WEATHER_VIS = { clear: 1, haze: 0.72, overcast: 0.9 } // 天気ごとの見える距離の倍率
 export const JUMP_V = 3.3              // 跳ぶ速さ（約0.55m の高さ。主要FPSの小さな跳び上がりと同じくらい）
 export const MUZZLE_V = 820          // 銃口初速 m/s
 export const DRAG = 0.12             // 空気抵抗（速度に比例。1秒で約1割落ちる）
@@ -264,6 +265,7 @@ export function createState(seed = Date.now(), opts = {}) {
     wind: { x: 0, z: 0, speed: 0, dir: 0 }, windT: 0,
     units: [], bullets: [], events: [], stats: { shots: 0, hits: 0, kills: 0, longest: 0, headshots: 0 },
     enemyN: opts.enemies ?? ENEMY_N, difficulty: opts.difficulty ?? 1, noZone: !!opts.noZone,
+    weather: opts.weather ?? ['clear', 'clear', 'haze', 'overcast'][Math.floor(hash(seed, 3, 1) * 4)], // 試合ごとの天気（乱数の並びは変えない）
   }
   setStage(opts.stage)
   st.stage = STAGE
@@ -573,7 +575,7 @@ function stepEnemy(st, e) {
   const facing = Math.cos(toMe - look) // 自分の方を向いているほど見つけやすい
   let seen = 0
   if (me.alive && d < 1200 && facing > -0.2) {
-    const range = visibleRange(me) * (0.75 + 0.35 * Math.max(0, facing)) * (0.8 + 0.2 * diff)
+    const range = visibleRange(me) * (0.75 + 0.35 * Math.max(0, facing)) * (0.8 + 0.2 * diff) * WEATHER_VIS[st.weather] // もやが濃いと遠くは見えない（お互いさま）
     if (d < range) {
       // 胴が隠れていても頭が出ていれば見える（手すり壁の陰からのぞいたとき）。見えた方を狙う
       seen = lineOfSight(ee.x, ee.y, ee.z, me_c.x, me_c.y, me_c.z); ai.aimHead = false

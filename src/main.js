@@ -1,9 +1,9 @@
 // RIDGELINE の描画・入力・音・画面。ロジックは sim.js（固定60Hz）
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import * as S from './sim.js?v=202610090103'
-import { buildRifle, animateBolt } from './rifle.js?v=202610090103'
-import { createGrass } from './grass.js?v=202610090103'
+import * as S from './sim.js?v=202610090115'
+import { buildRifle, animateBolt } from './rifle.js?v=202610090115'
+import { createGrass } from './grass.js?v=202610090115'
 
 const $ = id => document.getElementById(id)
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
@@ -29,23 +29,26 @@ scene.add(camera)
 const SUN = new THREE.Vector3(-0.45, 0.42, 0.78).normalize()
 const sky = new THREE.Mesh(new THREE.SphereGeometry(3000, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: { sun: { value: SUN }, hz: { value: HAZE }, top: { value: new THREE.Color('#6f8fae') } },
+  uniforms: { sun: { value: SUN }, hz: { value: HAZE }, top: { value: new THREE.Color('#6f8fae') }, sunK: { value: 1 } },
   vertexShader: 'varying vec3 vP0; void main(){ vP0 = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
-  fragmentShader: ['uniform vec3 sun; uniform vec3 hz; uniform vec3 top; varying vec3 vP0;', // 方向は画素ごとに正規化する（太陽が引き伸ばされない）
+  fragmentShader: ['uniform vec3 sun; uniform vec3 hz; uniform vec3 top; uniform float sunK; varying vec3 vP0;', // 方向は画素ごとに正規化する（太陽が引き伸ばされない）
     'void main(){ vec3 vP = normalize(vP0); float h = smoothstep(-0.05, 0.5, vP.y); vec3 c = mix(hz, top, pow(h, 0.7));',
-    ' float s = max(dot(vP, sun), 0.); c += vec3(1.,.93,.8) * (pow(s, 6.) * .3 + pow(s, 400.) * .25 + smoothstep(.99985, .99993, s) * 6.);',
+    ' float s = max(dot(vP, sun), 0.); c += vec3(1.,.93,.8) * sunK * (pow(s, 6.) * .3 + pow(s, 400.) * .25 + smoothstep(.99985, .99993, s) * 6.);',
     ' gl_FragColor = vec4(c, 1.);',
     '#include <colorspace_fragment>',
     '}'].join('\n'),
 }))
 sky.renderOrder = -1
-{
-  // 空の明るさを映り込みと環境光に使う（金属やレンズが空を映す）
+function bakeEnv() {
+  // 空の明るさを映り込みと環境光に使う（金属やレンズが空を映す）。天気を変えたら焼き直す
   const pm = new THREE.PMREMGenerator(renderer), es = new THREE.Scene(); es.add(sky)
+  if (scene.environment) scene.environment.dispose()
   scene.environment = pm.fromScene(es, 0, 0.1, 5000).texture; scene.environmentIntensity = 0.35; pm.dispose()
+  scene.add(sky)
 }
-scene.add(sky)
-scene.add(new THREE.HemisphereLight('#dfe8f0', '#6b6a4c', 1.05)) // 逆光でも木が黒くつぶれないよう、空と地面の照り返しを強めに
+bakeEnv()
+const hemi = new THREE.HemisphereLight('#dfe8f0', '#6b6a4c', 1.05) // 逆光でも木が黒くつぶれないよう、空と地面の照り返しを強めに
+scene.add(hemi)
 const sun = new THREE.DirectionalLight('#ffeed6', 3.0)
 sun.castShadow = true
 sun.shadow.mapSize.set(2048, 2048)
@@ -53,6 +56,22 @@ Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, n
 sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.05
 scene.add(sun, sun.target)
 
+// 天気と時間帯: 晴れの昼・朝もや（低い日差し、遠くが白く煙る）・曇り（影が薄い、空が灰色）
+const WEATHER = {
+  clear: { sun: [-0.45, 0.42, 0.78], sunCol: '#ffeed6', sunI: 3.0, sunK: 1, hemiSky: '#dfe8f0', hemiI: 1.05, haze: '#b9c4c6', fog: 0.0011, top: '#6f8fae', exp: 1.05 },
+  haze: { sun: [-0.7, 0.16, 0.7], sunCol: '#ffcf96', sunI: 2.4, sunK: 0.9, hemiSky: '#e6ddcf', hemiI: 0.95, haze: '#cfc6b6', fog: 0.0019, top: '#8a9db0', exp: 1.0 },
+  overcast: { sun: [-0.3, 0.7, 0.6], sunCol: '#e8ecef', sunI: 0.7, sunK: 0, hemiSky: '#d2d7db', hemiI: 1.9, haze: '#aab0b3', fog: 0.0016, top: '#9aa3aa', exp: 1.1 },
+}
+let weatherNow = null
+function applyWeather(k) {
+  if (weatherNow === k) return
+  weatherNow = k; const w = WEATHER[k] || WEATHER.clear
+  SUN.set(...w.sun).normalize(); sun.color.set(w.sunCol); sun.intensity = w.sunI
+  sky.material.uniforms.sunK.value = w.sunK; sky.material.uniforms.top.value.set(w.top)
+  HAZE.set(w.haze); scene.fog.color.copy(HAZE); scene.fog.density = w.fog
+  hemi.color.set(w.hemiSky); hemi.intensity = w.hemiI; renderer.toneMappingExposure = w.exp
+  bakeEnv()
+}
 // ================================================================ ステージ（地形・木・岩・建物）。ステージを変えたら作り直す
 function noiseTex(size, f) {
   const c = document.createElement('canvas'); c.width = c.height = size
@@ -302,17 +321,42 @@ buildScene()
 const ghillieTex = noiseTex(64, (() => { const r = S.rng(3); return () => 90 + r() * 120 })())
 ghillieTex.repeat.set(2, 2)
 const enemyViews = []
+let _strips = null
+function ghillieStrips() {
+  // ギリースーツの房: 体の表面から垂れる細い布切れ 420本を1つの形に。緑・枯れ草色・土色を混ぜる
+  if (_strips) return _strips
+  const r = S.rng(61), pos = [], col = [], c = new THREE.Color()
+  const pal = ['#5a6236', '#6b6a3c', '#4b5230', '#7a7148', '#3f4528', '#857a52'].map(h => new THREE.Color(h))
+  for (let i = 0; i < 420; i++) {
+    const y = 0.25 + r() * 1.55, a = r() * Math.PI * 2
+    const rad = y > 1.45 ? 0.19 : y > 0.85 ? 0.3 : 0.2 // 頭・胴・脚の太さ
+    const px = Math.cos(a) * rad, pz = Math.sin(a) * rad * 0.8
+    const len = 0.14 + r() * 0.26, w = 0.035 + r() * 0.03, out = 0.25 + r() * 0.3
+    const tx = -Math.sin(a) * w, tz = Math.cos(a) * w * 0.8
+    const ex = px + Math.cos(a) * len * out, ez = pz + Math.sin(a) * len * out, ey = y - len
+    pos.push(px - tx, y, pz - tz, px + tx, y, pz + tz, ex + tx * 0.4, ey, ez + tz * 0.4, px - tx, y, pz - tz, ex + tx * 0.4, ey, ez + tz * 0.4, ex - tx * 0.4, ey, ez - tz * 0.4)
+    c.copy(pal[Math.floor(r() * pal.length)]).multiplyScalar(0.85 + r() * 0.3)
+    for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b)
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals()
+  return (_strips = g)
+}
 function makeEnemyView() {
   const g = new THREE.Group()
-  const suit = new THREE.MeshStandardMaterial({ color: '#5b6640', map: ghillieTex, roughness: 1 })
-  const dark = new THREE.MeshStandardMaterial({ color: '#2a2d26', roughness: 0.7 })
+  const suit = new THREE.MeshStandardMaterial({ color: '#4f5735', map: ghillieTex, roughness: 1 })
+  const dark = new THREE.MeshStandardMaterial({ color: '#25272a', roughness: 0.5, metalness: 0.6 })
+  const wrap = new THREE.MeshStandardMaterial({ color: '#6a6444', map: ghillieTex, roughness: 1 }) // 銃に巻いた麻布
   const body = new THREE.Group(); g.add(body)
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.6, 3, 8), suit); torso.position.y = 1.05; body.add(torso)
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), suit); head.position.y = 1.6; body.add(head)
-  for (const s of [1, -1]) { const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.65, 3, 6), suit); leg.position.set(0.13 * s, 0.42, 0); body.add(leg) }
-  const rifle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 1.2), dark); rifle.position.set(0.15, 1.32, 0.5); body.add(rifle)
-  // 毛羽立ち（ギリースーツのぼさぼさ）
-  const tuft = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), new THREE.MeshStandardMaterial({ color: '#4c5636', roughness: 1, flatShading: true })); tuft.position.y = 1.25; tuft.scale.set(1, 0.9, 0.7); body.add(tuft)
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.55, 3, 8), suit); torso.position.y = 1.08; body.add(torso)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), suit); head.position.y = 1.6; body.add(head)
+  for (const s of [1, -1]) { const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.65, 3, 6), suit); leg.position.set(0.12 * s, 0.42, 0); body.add(leg) }
+  for (const s of [1, -1]) { const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.45, 3, 6).rotateX(Math.PI / 2 - 0.3), suit); arm.position.set(0.17 * s, 1.3, 0.22); body.add(arm) } // 銃を構える腕
+  // 狙撃銃: 布を巻いた銃身とスコープ
+  const rifle = new THREE.Group(); rifle.position.set(0.12, 1.36, 0.35); body.add(rifle)
+  rifle.add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.75), wrap))
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.015, 0.6, 8).rotateX(Math.PI / 2), dark); bar.position.z = 0.65; rifle.add(bar)
+  const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.34, 10).rotateX(Math.PI / 2), wrap); sc.position.set(0, 0.08, 0.05); rifle.add(sc)
+  const strips = new THREE.Mesh(ghillieStrips(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide })); body.add(strips)
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true } })
   // スコープの光: 遠くても見える大きさの光（構えている間だけ、こちらを向いているときに強く）
   const glint = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex(), color: '#fff6e0', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: false, fog: false }))
@@ -407,12 +451,12 @@ const SFX = {
   // 遠くの銃声: 距離のぶん遅れて、高い音が削れて届く
   far: (d, pan) => { const far = Math.min(1, d / 1100), dl = d / S.SOUND_V; noise(0.12, 0.8 * (1 - far * 0.6), 2400, 'lowpass', dl, 300, pan, far, 0.7, 0.7); tone(55, 0.6, 'sine', 0.3 * (1 - far * 0.5), 30, dl, pan, far); echoes(0.45 * (1 - far * 0.5), dl, pan) },
   snap: (pan) => { noise(0.03, 0.9, 5000, 'highpass', 0, null, pan, 0, 0.7, 0.1); tone(1800, 0.05, 'square', 0.15, 600, 0, pan) },
-  hitMark: (d) => { tone(900, 0.12, 'triangle', 0.25, 500, d / S.SOUND_V); noise(0.08, 0.3, 700, 'lowpass', d / S.SOUND_V) }, // 着弾の音は遅れて返ってくる
+  hitMark: (d) => { const dl = d / S.SOUND_V, k = Math.max(0.15, 1 - d / 900); noise(0.1, 0.45 * k, 380, 'lowpass', dl, 120, 0, Math.min(1, d / 900), 1, 0.4); tone(90, 0.12, 'sine', 0.2 * k, 55, dl) }, // 体に当たった鈍い音が遅れて返ってくる
   impact: (d, pan) => noise(0.15, 0.25 * Math.max(0.2, 1 - d / 800), 1200, 'bandpass', d / S.SOUND_V, 300, pan, Math.min(1, d / 800)),
   hurt: () => { noise(0.25, 0.7, 400, 'lowpass', 0, 90); tone(120, 0.4, 'sawtooth', 0.15, 60) },
   breathIn: () => noise(0.5, 0.06, 800, 'bandpass', 0, 1500, 0, 0, 1, 0.02),
   breathOut: () => noise(0.7, 0.07, 1200, 'bandpass', 0, 500, 0, 0, 1, 0.02),
-  kill: () => tone(520, 0.25, 'sine', 0.12, 780, 0.05),
+  kill: () => {}, // 倒した合図の音は鳴らさない（実際には鳴らない）
   rung: () => { noise(0.05, 0.25, 2600 + Math.random() * 500, 'bandpass', 0, null, 0, 0, 9, 0.1); tone(1250 + Math.random() * 150, 0.09, 'triangle', 0.05, 900) }, // はしごの金属の段を踏む音
   // 足音: 草・土は低くこもった音、市街地は硬い音。遠いほど小さく、左右に振る
   step: (vol, pan, far) => { if (state && state.stage === 'city') noise(0.06, 0.35 * vol, 1400 + Math.random() * 400, 'bandpass', 0, null, pan, far, 2, 0.1); else noise(0.09, 0.4 * vol, 500 + Math.random() * 250, 'lowpass', 0, 180, pan, far, 1, 0.08) },
@@ -606,6 +650,8 @@ function start() {
   if (S.STAGE !== stage) { S.setStage(stage); buildScene() }
   state = S.createState(Date.now() % 100000, { difficulty, stage })
   for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView()
+  applyWeather(state.weather)
+  setTimeout(() => { if (mode === 'play') feed({ clear: '天気 晴れ', haze: '天気 朝もや　遠くは見えにくい', overcast: '天気 曇り' }[state.weather]) }, 600)
   const me = state.units[0]
   yaw = 0; pitch = -0.05; setScope(false); zoomI = 0; viewRifle.visible = true; killcam = null
   mode = 'play'
@@ -644,9 +690,10 @@ function handleEvents(evs) {
         if (e.id === 0) {
           SFX.shot(); SFX.bolt(); kick = 1
           addPuff(e.x + e.dx * 1.2, e.y + e.dy * 1.2 - 0.1, e.z + e.dz * 1.2, '#cfc8b8', 0.8, 0.6)
+          if (me.stance === 'prone' && S.STAGE !== 'city') for (let i = 0; i < 4; i++) { const k = 0.8 + i * 0.5; addPuff(e.x + e.dx * k + (Math.random() - 0.5), S.heightAt(e.x + e.dx * k, e.z + e.dz * k) + 0.2, e.z + e.dz * k + (Math.random() - 0.5), '#b3a585', 1.1 + i * 0.3, 1.4, 0.7) } // 伏せ撃ちは銃口の風で地面の土が舞う
           // 弾の筋（空気の揺らぎ）: 遠くまで薄く
           const pts = [new THREE.Vector3(e.x, e.y - 0.05, e.z), new THREE.Vector3(e.x + e.dx * 4, e.y + e.dy * 4 - 0.05, e.z + e.dz * 4)]
-          const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#e8e2d0', transparent: true, opacity: 0.35, fog: false }))
+          const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#dcdccf', transparent: true, opacity: 0.2, fog: false }))
           l.frustumCulled = false; scene.add(l); trails.push({ l, t: 0, bullet: state.bullets[state.bullets.length - 1], pts: [pts[0]] })
         } else {
           SFX.far(d, pan)
@@ -668,7 +715,7 @@ function handleEvents(evs) {
         break
       case 'snap': SFX.snap(pan); break
       case 'hit':
-        if (e.by === 0) { $('hit').classList.remove('on'); void $('hit').offsetWidth; $('hit').classList.add('on'); SFX.hitMark(e.dist) ; addPuff(e.x, e.y, e.z, '#8a2a20', 0.7, 0.5) }
+        if (e.by === 0) { SFX.hitMark(e.dist); addPuff(e.x, e.y, e.z, '#7a3a2c', 0.6, 0.6, 0.5) } // 命中は印を出さない。スコープで倒れるのを見るか、遅れて届く鈍い音で知る
         if (e.id === 0) {
           SFX.hurt(); $('dmg').classList.add('on'); setTimeout(() => $('dmg').classList.remove('on'), 120)
           const shooter = state.units[e.by], a = Math.atan2(shooter.x - me.x, shooter.z - me.z) - yaw
@@ -709,6 +756,7 @@ function handleEvents(evs) {
 // ================================================================ 毎フレーム
 let kick = 0, swayView = { x: 0, y: 0 }, killcam = null
 const pose = { run: 0, rel: 0 }, eyeOff = { x: 0, y: 0, px: 0, py: 0 }
+const beat = { t: 0 }
 const pings = [] // 撃った敵: ミニマップに一定時間出す
 const PING_T = 10
 const stepAcc = {}
@@ -742,8 +790,8 @@ function updateViews(dt) {
   for (let i = trails.length - 1; i >= 0; i--) {
     const t = trails[i]; t.t += dt
     if (t.bullet && st.bullets.includes(t.bullet) && t.pts.length < 60) { t.pts.push(new THREE.Vector3(t.bullet.x, t.bullet.y, t.bullet.z)); t.l.geometry.dispose(); t.l.geometry = new THREE.BufferGeometry().setFromPoints(t.pts) }
-    t.l.material.opacity = 0.35 * Math.max(0, 1 - t.t / 1.6)
-    if (t.t > 1.6) { scene.remove(t.l); t.l.geometry.dispose(); trails.splice(i, 1) }
+    t.l.material.opacity = (scoped ? 0.22 : 0.05) * Math.max(0, 1 - t.t / 1.2) // 弾の通り道の空気の揺らぎ。スコープ越しにうっすら見える
+    if (t.t > 1.2) { scene.remove(t.l); t.l.geometry.dispose(); trails.splice(i, 1) }
   }
   for (let i = dust.length - 1; i >= 0; i--) {
     const d = dust[i]; d.t += dt
@@ -768,6 +816,12 @@ function updateViews(dt) {
     SFX.step(vol, pan, u.player ? 0 : Math.min(1, d / 90))
   }
   for (let i = pings.length - 1; i >= 0; i--) if ((pings[i].t += dt) > PING_T) pings.splice(i, 1)
+  // 心音: 息を止めて苦しくなる・息が切れる・走った直後に構えると、自分の鼓動が聞こえて揺れが分かる
+  if (actx && me.alive) {
+    const strain = scoped ? Math.max(me.holding ? Math.max(0, 1 - me.breath / 3) : 0, me.gasp ? 1 : 0, Math.min(1, me.moved) * 0.8) : 0
+    beat.t -= dt
+    if (strain > 0.25 && beat.t <= 0) { beat.t = 1.1 - strain * 0.45; tone(55, 0.09, 'sine', 0.22 * strain, 40); tone(50, 0.08, 'sine', 0.15 * strain, 38, 0.17) }
+  }
   // 安全地帯の壁
   if (st.zone) { const edge = Math.abs(Math.hypot(me.x - st.zone.x, me.z - st.zone.z) - st.zone.r); zoneWall.visible = edge < 220; zoneWall.material.opacity = 0.22 * Math.max(0, 1 - edge / 220); zoneWall.position.set(st.zone.x, 60, st.zone.z); zoneWall.scale.set(st.zone.r, 240, st.zone.r) } // 壁は縁に近いときだけ見せる（遠くの壁が空に帯のように映るため）
   if (windGain && actx) { windGain.gain.setTargetAtTime(0.012 + st.wind.speed * 0.006, actx.currentTime, 0.5); windFilter.frequency.setTargetAtTime(250 + st.wind.speed * 60, actx.currentTime, 0.5) }
@@ -853,9 +907,10 @@ window.rl = {
   get mode() { return mode },
   raw: () => state,
   zoom(i) { zoomI = i },
+  weather(k) { applyWeather(k); if (state) state.weather = k },
   pings: () => pings.length,
   h: (x, z) => S.heightAt(x, z),
-  start(opts = {}) { start(); if (opts.enemies !== undefined || opts.seed) { state = S.createState(opts.seed ?? 7, { difficulty, stage, ...opts }); for (const v of enemyViews) if (v) scene.remove(v.g, v.glint); enemyViews.length = 0; for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView() } },
+  start(opts = {}) { start(); if (opts.enemies !== undefined || opts.seed) { state = S.createState(opts.seed ?? 7, { difficulty, stage, ...opts }); for (const v of enemyViews) if (v) scene.remove(v.g, v.glint); enemyViews.length = 0; for (const u of state.units) if (!u.player) enemyViews[u.id] = makeEnemyView(); applyWeather(state.weather) } },
   pause(v = true) { paused = v },
   look(y, p) { yaw = y; pitch = p },
   scope(v) { setScope(v) },
